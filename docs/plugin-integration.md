@@ -2,7 +2,7 @@
 
 [← Zurück zur README](../README.md)
 
-**Status: Planungsdokument, noch nicht umgesetzt.** Kein Bestandteil des aktuellen Funktionsumfangs — hält fest, wie eine spätere Anbindung an `x32-recorder` (separates Django+C-Projekt) aussehen sollte, ohne die Unabhängigkeit dieser Bridge aufzugeben.
+**Status: überholt, nur noch historisch.** Die tatsächliche Integration lief anders als hier geplant: x32-recorder bekam einen generischen Plugin-Mechanismus (`django_app`/`external_process`), und diese Bridge läuft heute darüber als `external_process`-Plugin - x32-recorder startet/stoppt/überwacht sie per PID-Datei (ähnlich `manage_services.py`), statt sie nur per HTTP-Client read-only anzusprechen wie unten geplant. Bleibt dabei komplett eigenständig installier-/nutzbar, wie hier ursprünglich als Leitprinzip festgehalten. Der Rest dieses Dokuments ist unverändert als Aufzeichnung der damaligen Überlegungen erhalten.
 
 ## Leitprinzip
 

@@ -40,12 +40,21 @@ Für die Kommunikation müssen sich der Steuerungs-PC, der Daemon und das X32-Mi
 - [Konfiguration: system_config.json](docs/system-config.md) — vollständige Parameter-Referenz.
 - [Mappings, Hybrid-Kanal-Modus & Undo](docs/mappings.md) — `midi_osc_mappings.json`, Kanal-/Bus-/DCA-Adressierung per Velocity, Undo-Konfiguration.
 - [Web-Oberfläche](docs/web-ui.md) — Status/Config/Mappings/Logs-Tabs, technische Entscheidungen.
-- [Plan: Integration als "Plugin" in x32-recorder](docs/plugin-integration.md) — noch nicht umgesetzt, hält die Architektur-Entscheidungen für später fest.
+- [Plan: Integration als "Plugin" in x32-recorder](docs/plugin-integration.md) — historisches Planungsdokument; die tatsächliche Integration lief einfacher (siehe Roadmap unten).
 - [Changelog](CHANGELOG.md) — alle bisherigen Änderungen, neueste zuerst.
 
 ## Roadmap
 
-### 🚧 In Arbeit / ToDo (Nächste Meilensteine)
+### Erledigt
+
+- **x32-recorder-Integration:** läuft heute als `external_process`-Plugin über x32-recorders
+  Plugin-System (GitHub-Import, Start/Stop/Logs über x32-recorders Settings-Seite) - einfacher als
+  der ursprüngliche Plan in [docs/plugin-integration.md](docs/plugin-integration.md) (der einen
+  reinen HTTP-Client ohne Prozessverwaltung vorsah, bevor es in x32-recorder überhaupt einen
+  Plugin-Mechanismus gab). Diese Bridge bleibt dabei komplett eigenständig installier- und
+  nutzbar - x32-recorder startet/stoppt sie nur bequemlichkeitshalber.
+
+### 🚧 In Arbeit / ToDo
 
 - **Bekannte Einschränkung:** `pymidi` implementiert kein Recovery-Journal (im Gegensatz zum ursprünglich anvisierten, aber nie funktionsfähigen `rtpmidi`-Journal). Auf verlustbehafteten Netzwerken gehen einzelne MIDI-Pakete daher ersatzlos verloren.
 - **Bekannte Einschränkung:** Die Subnetz-Broadcast-Adresse wird unter der Annahme eines /24-Netzes berechnet (letztes Oktett → `.255`). In selteneren Netzwerken mit anderer Subnetzmaske könnte das nicht zutreffen — in dem Fall hilft weiterhin, `x32_ip` explizit zu setzen.
@@ -53,4 +62,3 @@ Für die Kommunikation müssen sich der Steuerungs-PC, der Daemon und das X32-Mi
 ### 💡 Geplante Optimierungen
 
 - **Intelligente Paket-Glättung** *(niedrige Priorität — aktuell keine komplexen Fader-Fahrten geplant, die das nötig machen würden)*: Optionale Reduzierung von aufeinanderfolgenden OSC-Befehlen (Throttling) bei schnellen Fader-Fahrten, um die Netzwerklast zu senken.
-- **x32-recorder-Integration:** ausführlicher Plan bereits festgehalten, siehe [docs/plugin-integration.md](docs/plugin-integration.md) — kein aktueller Bestandteil dieses Projekts, wird erst umgesetzt, wenn der Bedarf entsteht.
