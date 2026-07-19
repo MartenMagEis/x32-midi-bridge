@@ -1,0 +1,59 @@
+[
+  {
+    "name": "global_set_channel",
+    "trigger": {
+      "type": "note_on",
+      "number": 62
+    },
+    "action": "set_channel"
+  },
+  {
+    "name": "global_add_channel",
+    "trigger": {
+      "type": "note_on",
+      "number": 64
+    },
+    "action": "add_channel"
+  },
+  {
+    "name": "vocal_send_mute",
+    "trigger": {
+      "type": "note_on",
+      "number": 67
+    },
+    "save_state": false,
+    "actions": [
+      {
+        "path": "/ch/{active_channels}/mix/01/on",
+        "value": 1
+      }
+    ]
+  },
+  {
+    "name": "pan_channels_via_note",
+    "trigger": {
+      "type": "note_on",
+      "number": 69
+    },
+    "save_state": true,
+    "actions": [
+      {
+        "path": "/ch/{active_channels}/mix/pan",
+        "value": "midi_value",
+        "scale": "midi_to_pan"
+      }
+    ],
+    "undo_trigger": {
+      "type": "note_on",
+      "number": 70
+    }
+  },
+  {
+    "name": "global_set_channel_class",
+    "trigger": {
+      "type": "note_on",
+      "number": 71
+    },
+    "action": "set_channel_class"
+  }
+]

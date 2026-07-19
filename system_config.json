@@ -1,0 +1,17 @@
+{
+  "x32_ip": "auto",
+  "x32_port": 10023,
+  "midi_source": "rtp",
+  "rtp_session_name": "x32-midi-bridge",
+  "rtp_host_ip": "auto",
+  "rtp_local_port": 5004,
+  "allowed_peers": [],
+  "double_send": false,
+  "undo_timeout_ms": 100,
+  "verify_delay_ms": 50,
+  "discovery_interval_s": 5,
+  "log_level": "INFO",
+  "web_enabled": true,
+  "web_host": "0.0.0.0",
+  "web_port": 8090
+}

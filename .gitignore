@@ -1,0 +1,14 @@
+.venv/
+.venv.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+.pytest_cache/
+.DS_Store
+Thumbs.db
+uv.lock
+bridge.log
+bridge.log.*

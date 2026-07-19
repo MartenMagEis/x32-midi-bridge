@@ -1,0 +1,8 @@
+{
+  "kind": "external_process",
+  "display_name": "X32 MIDI Bridge",
+  "description": "MIDI-zu-OSC-Steuerung für das X32 (RTP-MIDI/AppleMIDI), inkl. eigener Weboberfläche zur Konfiguration.",
+  "install_command": "uv sync",
+  "start_command": "uv run python main.py",
+  "port": 8090
+}

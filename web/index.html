@@ -1,0 +1,254 @@
+<meta charset="utf-8">
+<title>X32 MIDI Bridge</title>
+<link rel="stylesheet" href="/style.css">
+
+<header class="topbar">
+  <h1>X32 MIDI Bridge</h1>
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="status">Status</button>
+    <button class="tab-btn" data-tab="config">Config</button>
+    <button class="tab-btn" data-tab="mappings">Mappings</button>
+    <button class="tab-btn" data-tab="logs">Logs</button>
+  </nav>
+</header>
+
+<main>
+  <section id="tab-status" class="tab-panel active">
+    <div class="card">
+      <h2>Status</h2>
+      <table class="status-table">
+        <tr><th>X32 IP</th><td id="s-x32-ip">-</td></tr>
+        <tr><th>X32 Port</th><td id="s-x32-port">-</td></tr>
+        <tr><th>X32-Verbindung</th><td id="s-x32-connected">-</td></tr>
+        <tr><th>MIDI-Eingang</th><td id="s-rtp-status">-</td></tr>
+        <tr><th>Aktive Klasse</th><td id="s-active-class">-</td></tr>
+        <tr><th>Verbundene Peers</th><td id="s-peers">-</td></tr>
+        <tr><th>Web-Port</th><td id="s-web-port">-</td></tr>
+      </table>
+      <h3>Aktive Auswahl (je Klasse)</h3>
+      <pre id="s-active-channels" class="code-block">-</pre>
+      <h3>Undo-Cache</h3>
+      <pre id="s-undo-cache" class="code-block">-</pre>
+    </div>
+  </section>
+
+  <section id="tab-config" class="tab-panel">
+    <div class="card">
+      <h2>Konfiguration</h2>
+      <p class="hint">Felder mit ⚠ erfordern einen Neustart der Bridge, um wirksam zu werden.</p>
+
+      <h3>X32-Verbindung</h3>
+      <label class="checkbox-row">
+        <input id="cfg-x32-auto" type="checkbox">
+        X32 automatisch im Netzwerk suchen
+      </label>
+      <div class="form-row" id="cfg-x32-ip-row">
+        <label>Feste X32-IP-Adresse
+          <input id="cfg-x32-ip" type="text" placeholder="z. B. 192.168.1.50">
+        </label>
+      </div>
+      <div class="form-row">
+        <label>X32 OSC-Port
+          <input id="cfg-x32-port" type="number" min="1" max="65535">
+        </label>
+      </div>
+
+      <h3>MIDI-Eingang</h3>
+      <div class="form-row">
+        <label>Quelle ⚠
+          <select id="cfg-midi-source"></select>
+        </label>
+        <button id="cfg-midi-refresh-devices" type="button">Geräte aktualisieren</button>
+      </div>
+      <p class="hint">"RTP-MIDI (Netzwerk)" ist die Standardquelle (siehe unten). Alternativ kann ein lokal angeschlossenes MIDI-Interface direkt ausgewählt werden — die Geräteliste wird beim Laden dieser Seite und per "Geräte aktualisieren" neu abgefragt (nützlich, wenn ein USB-Gerät erst danach angeschlossen wurde).</p>
+
+      <div id="cfg-rtp-settings">
+        <h3>RTP-MIDI</h3>
+        <div class="form-row">
+          <label>Session-Name ⚠
+            <input id="cfg-rtp-session-name" type="text">
+          </label>
+          <label>Control-Port ⚠
+            <input id="cfg-rtp-local-port" type="number" min="1" max="65535">
+          </label>
+        </div>
+        <label class="checkbox-row">
+          <input id="cfg-rtp-host-auto" type="checkbox">
+          Bind-IP automatisch ermitteln
+        </label>
+        <div class="form-row" id="cfg-rtp-host-ip-row">
+          <label>Feste Bind-IP ⚠
+            <input id="cfg-rtp-host-ip" type="text" placeholder="z. B. 192.168.1.20">
+          </label>
+        </div>
+      </div>
+
+      <h3>Web-Oberfläche</h3>
+      <label class="checkbox-row">
+        <input id="cfg-web-enabled" type="checkbox" disabled>
+        Web-Oberfläche aktiv
+      </label>
+      <p class="hint">Lässt sich absichtlich nicht von hier aus deaktivieren — sonst gäbe es nach dem nächsten Neustart keinen Weg mehr zurück in die Oberfläche. Zum Deaktivieren <code>"web_enabled": false</code> direkt in <code>system_config.json</code> setzen.</p>
+      <div class="form-row">
+        <label>Bind-Host ⚠
+          <input id="cfg-web-host" type="text">
+        </label>
+        <label>Port ⚠
+          <input id="cfg-web-port" type="number" min="1" max="65535">
+        </label>
+      </div>
+
+      <h3>Verhalten</h3>
+      <label class="checkbox-row">
+        <input id="cfg-double-send" type="checkbox">
+        Kritische Befehle doppelt senden (double_send)
+      </label>
+      <div class="form-row">
+        <label>Log-Level
+          <select id="cfg-log-level">
+            <option value="DEBUG">DEBUG</option>
+            <option value="INFO">INFO</option>
+            <option value="WARNING">WARNING</option>
+            <option value="ERROR">ERROR</option>
+            <option value="CRITICAL">CRITICAL</option>
+          </select>
+        </label>
+        <label>Undo-Timeout (ms)
+          <input id="cfg-undo-timeout" type="number" min="0">
+        </label>
+        <label>Verify-Delay (ms)
+          <input id="cfg-verify-delay" type="number" min="0">
+        </label>
+        <label>Discovery-Intervall (s)
+          <input id="cfg-discovery-interval" type="number" min="0" step="any">
+        </label>
+      </div>
+
+      <h3>Erlaubte Peers</h3>
+      <p class="hint">Optionale Liste erlaubter Adressen (derzeit von der Bridge selbst noch nicht ausgewertet).</p>
+      <div id="cfg-allowed-peers-list"></div>
+      <button id="cfg-allowed-peers-add" type="button">+ Eintrag hinzufügen</button>
+
+      <div class="actions">
+        <button id="config-reload">Neu laden</button>
+        <button id="config-save" class="primary">Speichern</button>
+      </div>
+      <div id="config-message" class="message"></div>
+    </div>
+  </section>
+
+  <section id="tab-mappings" class="tab-panel">
+    <div class="card">
+      <div class="mappings-header">
+        <h2>MIDI → OSC Mappings</h2>
+        <button id="mapping-add" class="primary">+ Neues Mapping</button>
+      </div>
+      <ul id="mappings-list" class="mappings-list"></ul>
+      <div id="mappings-message" class="message"></div>
+    </div>
+
+    <div class="card" id="mapping-editor-card" hidden>
+      <h3 id="mapping-editor-title">Mapping bearbeiten</h3>
+      <div class="form-row">
+        <label>Name
+          <input id="m-name" type="text">
+        </label>
+      </div>
+
+      <div id="m-channel-fields">
+        <p id="m-channel-label" class="hint"></p>
+        <div class="form-row">
+          <label>Note / Nummer
+            <input id="m-trigger-number" type="text" placeholder="z. B. A3 oder 69">
+          </label>
+          <span id="m-trigger-resolved" class="note-resolved"></span>
+        </div>
+      </div>
+
+      <div id="m-osc-fields">
+        <div class="form-row">
+          <label>Trigger-Typ
+            <select id="m-trigger-type">
+              <option value="note_on">note_on</option>
+              <option value="note_off">note_off</option>
+              <option value="control_change">control_change</option>
+            </select>
+          </label>
+          <label>Note / Nummer
+            <input id="m-osc-trigger-number" type="text" placeholder="z. B. G3 oder 67">
+          </label>
+          <span id="m-osc-trigger-resolved" class="note-resolved"></span>
+        </div>
+
+        <label class="checkbox-row">
+          <input id="m-save-state" type="checkbox">
+          Zustand sichern (First-Write-Wins-Undo aktivieren)
+        </label>
+
+        <div id="m-undo-fields" hidden>
+          <div class="form-row">
+            <label>Undo-Note / Nummer
+              <input id="m-undo-number" type="text">
+            </label>
+            <span id="m-undo-resolved" class="note-resolved"></span>
+          </div>
+          <p class="hint">Der Undo-Trigger hat immer denselben Trigger-Typ wie oben (<span id="m-undo-type-hint">note_on</span>).</p>
+        </div>
+
+        <h4>Aktionen</h4>
+        <div id="m-actions-list"></div>
+        <button id="m-action-add" type="button">+ Aktion hinzufügen</button>
+      </div>
+
+      <div class="actions">
+        <button id="mapping-save" class="primary">Speichern</button>
+        <button id="mapping-delete" class="danger">Löschen</button>
+        <button id="mapping-cancel">Abbrechen</button>
+      </div>
+      <div id="mapping-editor-message" class="message"></div>
+    </div>
+
+    <div class="card">
+      <h3>OSC-Wert abfragen</h3>
+      <p class="hint">Sendet eine leere OSC-Anfrage an den Pfad und zeigt die Antwort des X32 — nützlich, um beim Bauen eines Mappings den passenden OSC-Pfad und aktuellen Wert zu finden.</p>
+      <div class="form-row">
+        <label>OSC-Pfad
+          <input id="osc-path" type="text" placeholder="/ch/01/mix/pan">
+        </label>
+        <button id="osc-query" class="primary">Abfragen</button>
+      </div>
+      <div id="osc-message" class="message"></div>
+    </div>
+
+    <div class="card">
+      <h3>Test-MIDI-Event senden</h3>
+      <p class="hint">Löst dieselbe Mapping-Logik aus wie ein echtes MIDI-Event über RTP-MIDI — zum Testen eines Mappings, ohne dafür extra eine echte Note senden zu müssen.</p>
+      <div class="form-row">
+        <label>Typ
+          <select id="test-type">
+            <option value="note_on">note_on</option>
+            <option value="note_off">note_off</option>
+            <option value="control_change">control_change</option>
+          </select>
+        </label>
+        <label>Nummer/Note
+          <input id="test-number" type="text" placeholder="z. B. A3 oder 69">
+        </label>
+        <label>Velocity
+          <input id="test-velocity" type="number" min="0" max="127" value="100">
+        </label>
+        <button id="test-send" class="primary">Senden</button>
+      </div>
+      <div id="test-message" class="message"></div>
+    </div>
+  </section>
+
+  <section id="tab-logs" class="tab-panel">
+    <div class="card">
+      <h2>Live-Logs</h2>
+      <pre id="log-view" class="log-view"></pre>
+    </div>
+  </section>
+</main>
+
+<script src="/app.js"></script>
