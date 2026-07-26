@@ -471,7 +471,13 @@ function renderActionsEditor(actions) {
   const container = $("m-actions-list");
   container.innerHTML = "";
   currentActions.forEach((action, i) => {
-    const mode = action.value === "midi_value" ? "midi_value" : action.value === "toggle" ? "toggle" : "fixed";
+    const mode =
+      action.value === "midi_value" ? "midi_value" :
+      action.value === "toggle" ? "toggle" :
+      action.value === "relative_db" ? "relative_db" : "fixed";
+    // relative_db has its own nested "where does the dB amount come from" choice - a fixed
+    // number (same amount every trigger) or "midi_value" (velocity-proportional, see db_scale).
+    const dbDeltaMode = action.db_delta === "midi_value" ? "midi_value" : "fixed";
     const row = document.createElement("div");
     row.className = "action-row";
     row.innerHTML =
@@ -480,6 +486,7 @@ function renderActionsEditor(actions) {
         '<option value="fixed">Fester Wert</option>' +
         '<option value="midi_value">Velocity (dynamisch)</option>' +
         '<option value="toggle">Toggle (An/Aus umschalten)</option>' +
+        '<option value="relative_db">Relativ (dB-Offset)</option>' +
       "</select>" +
       '<input type="number" class="action-fixed-value" step="any" value="' + (mode === "fixed" ? (action.value ?? 1) : 1) + '" ' + (mode === "fixed" ? "" : "hidden") + ">" +
       '<select class="action-scale" ' + (mode === "midi_value" ? "" : "hidden") + ">" +
@@ -490,16 +497,34 @@ function renderActionsEditor(actions) {
       "</select>" +
       '<input type="number" class="action-toggle-on" step="any" placeholder="An-Wert" title="An-Wert" value="' + (action.toggle_on_value ?? 1) + '" ' + (mode === "toggle" ? "" : "hidden") + ">" +
       '<input type="number" class="action-toggle-off" step="any" placeholder="Aus-Wert" title="Aus-Wert" value="' + (action.toggle_off_value ?? 0) + '" ' + (mode === "toggle" ? "" : "hidden") + ">" +
+      '<select class="action-db-delta-mode" title="Woher kommt der dB-Betrag" ' + (mode === "relative_db" ? "" : "hidden") + ">" +
+        '<option value="fixed">Fest</option>' +
+        '<option value="midi_value">Nach Velocity</option>' +
+      "</select>" +
+      '<input type="number" class="action-db-delta-fixed" step="any" placeholder="+10 oder -10 (dB)" title="dB-Änderung pro Trigger" value="' + (typeof action.db_delta === "number" ? action.db_delta : 10) + '" ' + (mode === "relative_db" && dbDeltaMode === "fixed" ? "" : "hidden") + ">" +
+      '<input type="number" class="action-db-max-velocity" step="1" min="1" max="127" placeholder="Max. Velocity" title="Velocity, ab der der volle dB-Betrag erreicht ist" value="' + (action.db_scale?.max_velocity ?? 127) + '" ' + (mode === "relative_db" && dbDeltaMode === "midi_value" ? "" : "hidden") + ">" +
+      '<input type="number" class="action-db-max-db" step="any" placeholder="dB bei Max. Velocity" title="dB-Änderung bei maximaler Velocity (negativ = leiser)" value="' + (action.db_scale?.max_db ?? 10) + '" ' + (mode === "relative_db" && dbDeltaMode === "midi_value" ? "" : "hidden") + ">" +
       '<button type="button" class="action-remove">✕</button>';
     row.querySelector(".action-value-mode").value = mode;
     row.querySelector(".action-scale").value = action.scale || "";
+    row.querySelector(".action-db-delta-mode").value = dbDeltaMode;
+    const updateDbDeltaFieldVisibility = () => {
+      const valueMode = row.querySelector(".action-value-mode").value;
+      const deltaMode = row.querySelector(".action-db-delta-mode").value;
+      row.querySelector(".action-db-delta-mode").hidden = valueMode !== "relative_db";
+      row.querySelector(".action-db-delta-fixed").hidden = !(valueMode === "relative_db" && deltaMode === "fixed");
+      row.querySelector(".action-db-max-velocity").hidden = !(valueMode === "relative_db" && deltaMode === "midi_value");
+      row.querySelector(".action-db-max-db").hidden = !(valueMode === "relative_db" && deltaMode === "midi_value");
+    };
     row.querySelector(".action-value-mode").addEventListener("change", (e) => {
       const newMode = e.target.value;
       row.querySelector(".action-fixed-value").hidden = newMode !== "fixed";
       row.querySelector(".action-scale").hidden = newMode !== "midi_value";
       row.querySelector(".action-toggle-on").hidden = newMode !== "toggle";
       row.querySelector(".action-toggle-off").hidden = newMode !== "toggle";
+      updateDbDeltaFieldVisibility();
     });
+    row.querySelector(".action-db-delta-mode").addEventListener("change", updateDbDeltaFieldVisibility);
     row.querySelector(".action-remove").addEventListener("click", () => {
       renderActionsEditor(readActionsFromDom().filter((_, idx) => idx !== i));
     });
@@ -524,6 +549,21 @@ function readActionsFromDom() {
       const offRaw = row.querySelector(".action-toggle-off").value;
       action.toggle_on_value = onRaw === "" ? 1 : Number(onRaw);
       action.toggle_off_value = offRaw === "" ? 0 : Number(offRaw);
+    } else if (mode === "relative_db") {
+      action.value = "relative_db";
+      const deltaMode = row.querySelector(".action-db-delta-mode").value;
+      if (deltaMode === "midi_value") {
+        action.db_delta = "midi_value";
+        const maxVelocityRaw = row.querySelector(".action-db-max-velocity").value;
+        const maxDbRaw = row.querySelector(".action-db-max-db").value;
+        action.db_scale = {
+          max_velocity: maxVelocityRaw === "" ? 127 : Number(maxVelocityRaw),
+          max_db: maxDbRaw === "" ? 10 : Number(maxDbRaw),
+        };
+      } else {
+        const fixedRaw = row.querySelector(".action-db-delta-fixed").value;
+        action.db_delta = fixedRaw === "" ? 10 : Number(fixedRaw);
+      }
     } else {
       const fixedRaw = row.querySelector(".action-fixed-value").value;
       action.value = fixedRaw === "" ? 1 : Number(fixedRaw);

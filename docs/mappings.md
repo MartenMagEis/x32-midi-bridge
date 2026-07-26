@@ -22,6 +22,41 @@ Diese Datei (`midi_osc_mappings.json`) verknüpft MIDI-Eingänge (Noten und CC-B
 
   **Toggle vs. zwei getrennte Befehle:** Ein Toggle braucht nur eine MIDI-Note, hat aber ein Risiko — wird der Zustand direkt am Pult geändert (nicht über die Bridge), bleibt das für den nächsten Toggle unsichtbar; da aber immer der *aktuelle* Wert live abgefragt wird (nicht ein intern gemerkter Zustand), bleibt ein Toggle trotzdem korrekt zum tatsächlichen Pultzustand — nur eben einen OSC-Roundtrip langsamer als ein fester Wert. Wer ganz sichergehen will, dass ein Befehl *garantiert* mutet und ein anderer *garantiert* entmutet (z. B. für eine Show-Automation, die nie "raten" soll), definiert stattdessen zwei separate Mappings mit demselben Pfad — eines mit `"value": 1`, eines mit `"value": 0`, verschiedene Trigger-Noten. Beides ist schon heute ohne weitere Voraussetzungen möglich.
 
+- **Relativer dB-Offset** (z. B. "Kanal um 10dB lauter machen"): `"value": "relative_db"` fragt den aktuellen Fader-Wert am Zielpfad ab (`query_osc_value`, wie beim Toggle), rechnet ihn über die X32-Faderkurve (`FADER_CURVE_BREAKPOINTS`/`x32_float_to_db`/`x32_db_to_float`, siehe unten) in dB um, addiert `db_delta`, rechnet zurück und sendet den neuen (auf 0.0-1.0 geklemmten) Fader-Wert. Bewusst **kein** Prozent-Modus: der X32-Fader ist intern nicht linear, ein Prozent-Schritt auf dem rohen OSC-Wert würde je nach aktueller Position eine völlig unterschiedliche wahrgenommene Lautstärkeänderung bedeuten — dB ist dagegen unabhängig vom Startpunkt konsistent.
+
+  **`db_delta` als feste Zahl** — jeder Trigger ändert den Pegel immer um denselben Betrag:
+  ```json
+  { "path": "/ch/{active_channels}/mix/fader", "value": "relative_db", "db_delta": 10 }
+  ```
+  Für "leiser machen" reicht ein negativer Wert (`"db_delta": -10`) in einem zweiten, eigenen Mapping — kein Richtungsparameter nötig, gleiches Muster wie "zwei getrennte Mappings für garantiertes Mute/Unmute" oben. Unterliegt denselben Hybrid-Kanal-Regeln wie Toggle/ein fester Wert (Velocity wählt den Kanal).
+
+  **`db_delta: "midi_value"`** — die Velocity bestimmt den Betrag proportional (für einen Regler/Fader statt eines einfachen Tasters), skaliert über `"db_scale": {"max_velocity": ..., "max_db": ...}`:
+  ```json
+  {
+    "path": "/ch/{active_channels}/mix/fader",
+    "value": "relative_db",
+    "db_delta": "midi_value",
+    "db_scale": { "max_velocity": 100, "max_db": 20 }
+  }
+  ```
+  Linear ab Velocity 0 (= 0dB Änderung) bis `max_velocity` (= `max_db` Änderung), bei höherer tatsächlicher Velocity auf `max_db` geklemmt. `max_velocity` muss nicht 127 sein — z. B. `max_velocity: 100, max_db: 20` macht den Kopfrechnung einfacher (Velocity 50 = +10dB, Velocity 100 = +20dB). Velocity kann hier nicht gleichzeitig zur Kanalwahl verwendet werden (wie bei `"value": "midi_value"`) — der Befehl geht an alle aktuell vorausgewählten Kanäle (`active_channels`).
+
+  **Kein Fallback bei Query-Timeout, anders als Toggle:** schlägt die Abfrage des aktuellen Werts fehl, wird — anders als beim Toggle, der dann `toggle_on_value` sendet — **gar nichts** gesendet (nur eine Warnung geloggt). Ein geratener Sprung auf einen falschen Pegel wäre schlimmer als ein einmalig ausbleibender Tastendruck.
+
+  **Die X32-Faderkurve:** OSC transportiert einen Fader-Wert als Float `0.0-1.0`, keine dB direkt — die Umrechnung folgt einer stückweise linearen (in dB) Kurve mit unterschiedlicher Steigung je Bereich:
+
+  | Float | dB |
+  |---|---|
+  | 0.0 | -90 (praktischer Boden/"aus") |
+  | 0.0625 | -60 |
+  | 0.25 | -30 |
+  | 0.375 | -19 |
+  | 0.5 | -10 |
+  | 0.75 | 0 |
+  | 1.0 | +10 |
+
+  Community-Standard-Eckpunkte, gegen ein echtes X32-Rack verifiziert (siehe CHANGELOG für das Datum) — bei Abweichungen einfach `FADER_CURVE_BREAKPOINTS` in `main.py` anpassen.
+
 ## Der Hybrid-Kanal-Modus
 
 Der Hybrid-Kanal-Modus nutzt die Anschlagstärke (Velocity) einer MIDI-Note nicht für den Wert (z. B. Lautstärke), sondern zur direkten Adressierung des Zielkanals. Er ist vollständig implementiert (`is_hybrid_single_channel`/`is_hybrid_multi_channel` in `execute_mapping_action`) und gilt für die Aktionen *innerhalb* eines Mappings — nicht für `set_channel`/`add_channel` selbst, siehe Hinweis unten.

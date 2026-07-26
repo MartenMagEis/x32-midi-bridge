@@ -78,6 +78,55 @@ def note_name_to_midi_number(name: str) -> Optional[int]:
     return midi_number if 0 <= midi_number <= 127 else None
 
 
+# X32 fader law: OSC transports a fader's position as a plain float 0.0-1.0,
+# never dB directly - the console maps that float to dB internally via a
+# piecewise-linear-in-dB curve (not a single formula, the slope changes per
+# segment). These breakpoints are the commonly cited/community-documented X32
+# fader law, used here for the relative_db action (see execute_mapping_action)
+# to convert a queried fader position to dB, apply a delta, and convert back.
+# Verified against a real X32 console - see CHANGELOG for the verification
+# date if these ever need revisiting.
+FADER_CURVE_BREAKPOINTS: List["tuple[float, float]"] = [
+    (0.0, -90.0),
+    (0.0625, -60.0),
+    (0.25, -30.0),
+    (0.375, -19.0),
+    (0.5, -10.0),
+    (0.75, 0.0),
+    (1.0, 10.0),
+]
+
+
+def x32_float_to_db(value: float) -> float:
+    """Converts an X32 OSC fader float (0.0-1.0) to dB via FADER_CURVE_BREAKPOINTS,
+    linearly interpolating within whichever segment value falls into. Values
+    outside [0.0, 1.0] are clamped to the table's own ends first."""
+    value = max(FADER_CURVE_BREAKPOINTS[0][0], min(FADER_CURVE_BREAKPOINTS[-1][0], value))
+    for (f0, d0), (f1, d1) in zip(FADER_CURVE_BREAKPOINTS, FADER_CURVE_BREAKPOINTS[1:]):
+        if f0 <= value <= f1:
+            if f1 == f0:
+                return d0
+            t = (value - f0) / (f1 - f0)
+            return d0 + t * (d1 - d0)
+    return FADER_CURVE_BREAKPOINTS[-1][1]
+
+
+def x32_db_to_float(db: float) -> float:
+    """Inverse of x32_float_to_db - converts dB back to an X32 OSC fader
+    float, clamped to [0.0, 1.0] (i.e. to the table's dB range, -90..+10)."""
+    if db <= FADER_CURVE_BREAKPOINTS[0][1]:
+        return FADER_CURVE_BREAKPOINTS[0][0]
+    if db >= FADER_CURVE_BREAKPOINTS[-1][1]:
+        return FADER_CURVE_BREAKPOINTS[-1][0]
+    for (f0, d0), (f1, d1) in zip(FADER_CURVE_BREAKPOINTS, FADER_CURVE_BREAKPOINTS[1:]):
+        if d0 <= db <= d1:
+            if d1 == d0:
+                return f0
+            t = (db - d0) / (d1 - d0)
+            return f0 + t * (f1 - f0)
+    return FADER_CURVE_BREAKPOINTS[-1][0]
+
+
 def normalize_mappings(mappings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     def normalize_trigger(trigger: Optional[Dict[str, Any]]) -> None:
         if not trigger or trigger.get("type") not in ("note_on", "note_off"):
@@ -646,7 +695,15 @@ class X32MidiBridge:
 
     async def execute_mapping_action(self, action_desc: Dict[str, Any], event: MidiEvent, save_state: bool):
         path_template = action_desc["path"]
-        uses_midi_value = action_desc.get("value") == "midi_value"
+        # relative_db with a velocity-scaled delta (db_delta: "midi_value") uses the velocity to
+        # compute the dB amount, same as a plain midi_value action uses it for the OSC value
+        # itself - it can't simultaneously double as hybrid single-channel addressing (see
+        # docs/mappings.md's "Dynamischer Wert" section for the same reasoning on midi_value).
+        # relative_db with a *fixed* db_delta has no such conflict and keeps normal hybrid
+        # addressing (velocity picks the channel, same as toggle/a static value).
+        uses_midi_value = action_desc.get("value") == "midi_value" or (
+            action_desc.get("value") == "relative_db" and action_desc.get("db_delta") == "midi_value"
+        )
 
         if uses_midi_value:
             await self.send_to_active_channels(path_template, action_desc, event, save_state)
@@ -664,7 +721,8 @@ class X32MidiBridge:
                 path = path_template.replace("{active_channels}", f"{channel:02d}")
             await self._save_state_if_needed(path, save_state)
             value = await self._resolve_action_value(action_desc, event, path)
-            await self.send_osc_message(path, [value])
+            if value is not None:
+                await self.send_osc_message(path, [value])
             return
 
         if self.is_hybrid_multi_channel(event.velocity, action_desc):
@@ -689,6 +747,27 @@ class X32MidiBridge:
                 return on_value
             is_on = abs(current - on_value) <= abs(current - off_value)
             return off_value if is_on else on_value
+        if raw_value == "relative_db":
+            current = await self.query_osc_value(path)
+            if current is None:
+                logger.warning(
+                    "Relative dB change: could not read current value for %s (query timed out) - skipping",
+                    path,
+                )
+                return None  # sentinel: caller must not send anything - a guessed jump to the
+                              # wrong level is worse than no change at all (unlike toggle, there's
+                              # no safe fallback value here).
+            delta_spec = action_desc.get("db_delta", 0)
+            if delta_spec == "midi_value":
+                db_scale = action_desc.get("db_scale", {})
+                max_velocity = db_scale.get("max_velocity", 127)
+                max_db = db_scale.get("max_db", 10)
+                clamped_velocity = min(event.velocity, max_velocity) if max_velocity else 0
+                delta_db = (clamped_velocity / max_velocity) * max_db if max_velocity else 0.0
+            else:
+                delta_db = delta_spec
+            new_db = x32_float_to_db(current) + delta_db
+            return x32_db_to_float(new_db)
         return raw_value
 
     async def _save_state_if_needed(self, path: str, save_state: bool) -> None:
@@ -752,7 +831,8 @@ class X32MidiBridge:
                 )
                 await self._save_state_if_needed(path, save_state)
                 value = await self._resolve_action_value(action_desc, event, path)
-                await self.send_osc_message(path, [value])
+                if value is not None:
+                    await self.send_osc_message(path, [value])
             return
 
         channels = self.class_selections.get("ch")
@@ -764,7 +844,8 @@ class X32MidiBridge:
             path = path_template.replace("{active_channels}", f"{channel:02d}")
             await self._save_state_if_needed(path, save_state)
             value = await self._resolve_action_value(action_desc, event, path)
-            await self.send_osc_message(path, [value])
+            if value is not None:
+                await self.send_osc_message(path, [value])
 
     def scale(self, midi_value: int, scale_type: Optional[str]) -> Any:
         if scale_type == "midi_to_pan":
