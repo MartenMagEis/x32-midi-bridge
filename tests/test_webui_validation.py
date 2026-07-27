@@ -95,6 +95,39 @@ def test_validate_mappings_flags_trigger_undo_trigger_collision_within_one_mappi
     assert any("wird mehrfach verwendet" in e for e in errors)
 
 
+def test_validate_mappings_accepts_opposite_trigger():
+    mappings = [
+        {
+            "name": "fx_mute",
+            "trigger": {"type": "note_on", "number": 72},
+            "opposite_trigger": {"type": "note_on", "number": 73},
+            "actions": [{"path": "/config/mute/3", "value": "toggle"}],
+        },
+    ]
+    assert webui._validate_mappings(mappings) == []
+
+
+def test_validate_mappings_flags_trigger_opposite_trigger_collision():
+    mappings = [
+        {
+            "name": "a",
+            "trigger": {"type": "note_on", "number": 60},
+            "opposite_trigger": {"type": "note_on", "number": 60},
+        },
+    ]
+    errors = webui._validate_mappings(mappings)
+    assert any("wird mehrfach verwendet" in e for e in errors)
+
+
+def test_validate_mappings_flags_opposite_trigger_collision_across_mappings():
+    mappings = [
+        {"name": "a", "trigger": {"type": "note_on", "number": 60}},
+        {"name": "b", "trigger": {"type": "note_on", "number": 61}, "opposite_trigger": {"type": "note_on", "number": 60}},
+    ]
+    errors = webui._validate_mappings(mappings)
+    assert any("wird mehrfach verwendet" in e for e in errors)
+
+
 # ---- PUT /api/config: web_enabled lockout ----
 
 class _FakeBridge:

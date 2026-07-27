@@ -22,6 +22,17 @@ Diese Datei (`midi_osc_mappings.json`) verknüpft MIDI-Eingänge (Noten und CC-B
 
   **Toggle vs. zwei getrennte Befehle:** Ein Toggle braucht nur eine MIDI-Note, hat aber ein Risiko — wird der Zustand direkt am Pult geändert (nicht über die Bridge), bleibt das für den nächsten Toggle unsichtbar; da aber immer der *aktuelle* Wert live abgefragt wird (nicht ein intern gemerkter Zustand), bleibt ein Toggle trotzdem korrekt zum tatsächlichen Pultzustand — nur eben einen OSC-Roundtrip langsamer als ein fester Wert. Wer ganz sichergehen will, dass ein Befehl *garantiert* mutet und ein anderer *garantiert* entmutet (z. B. für eine Show-Automation, die nie "raten" soll), definiert stattdessen zwei separate Mappings mit demselben Pfad — eines mit `"value": 1`, eines mit `"value": 0`, verschiedene Trigger-Noten. Beides ist schon heute ohne weitere Voraussetzungen möglich.
 
+  **`opposite_trigger`: Toggle mit zwei Noten statt einer** — verbindet die beiden obigen Ansätze zu einer dritten Option, ohne einen neuen Wert-Modus zu brauchen. Ein Mapping mit `"value": "toggle"` kann optional eine zweite Trigger-Note bekommen:
+  ```json
+  {
+    "name": "fx_mute",
+    "trigger": { "type": "note_on", "number": 72 },
+    "opposite_trigger": { "type": "note_on", "number": 73 },
+    "actions": [{ "path": "/config/mute/3", "value": "toggle" }]
+  }
+  ```
+  `opposite_trigger` fehlt/leer (Standard) → unverändert der echte, einzeln-notige Toggle von oben (fragt bei jedem Auslösen live den Pultzustand ab). `opposite_trigger` gesetzt → **keine** Abfrage mehr: die Note oben (`trigger`) sendet immer `toggle_on_value`, `opposite_trigger` sendet immer `toggle_off_value` — zwei feste, garantiert richtige Tasten statt einer, die den aktuellen Zustand erraten muss. Praktisch dasselbe Ergebnis wie "zwei getrennte Mappings mit demselben Pfad" oben, nur als eine einzige Mapping-Definition mit einer zweiten Note statt zwei komplett eigenständigen Mappings — im Web-UI-Editor deshalb auch nur ein zusätzliches optionales Feld neben der Haupt-Note, statt eines zweiten ganzen Mapping-Eintrags. `opposite_trigger` hat immer denselben Trigger-Typ wie `trigger` (wie schon bei `undo_trigger`) und nimmt an derselben Duplikat-Prüfung/Notenvorschlag-Logik teil. Bei einer Mapping-Aktion, die nicht `"value": "toggle"` ist, hat `opposite_trigger` keinen besonderen Effekt — beide Noten lösen dann einfach identisch dieselbe(n) Aktion(en) aus.
+
 - **Relativer dB-Offset** (z. B. "Kanal um 10dB lauter machen"): `"value": "relative_db"` fragt den aktuellen Fader-Wert am Zielpfad ab (`query_osc_value`, wie beim Toggle), rechnet ihn über die X32-Faderkurve (`FADER_CURVE_BREAKPOINTS`/`x32_float_to_db`/`x32_db_to_float`, siehe unten) in dB um, addiert `db_delta`, rechnet zurück und sendet den neuen (auf 0.0-1.0 geklemmten) Fader-Wert. Bewusst **kein** Prozent-Modus: der X32-Fader ist intern nicht linear, ein Prozent-Schritt auf dem rohen OSC-Wert würde je nach aktueller Position eine völlig unterschiedliche wahrgenommene Lautstärkeänderung bedeuten — dB ist dagegen unabhängig vom Startpunkt konsistent.
 
   **`db_delta` als feste Zahl** — jeder Trigger ändert den Pegel immer um denselben Betrag:

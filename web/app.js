@@ -275,6 +275,10 @@ function collectUsedTriggers(excludeIndex, excludeField) {
       const resolved = resolveNoteInput(mapping.undo_trigger.number);
       if (resolved) used.push({ type: mapping.undo_trigger.type, number: resolved.number });
     }
+    if (mapping.opposite_trigger && !(index === excludeIndex && excludeField === "opposite_trigger")) {
+      const resolved = resolveNoteInput(mapping.opposite_trigger.number);
+      if (resolved) used.push({ type: mapping.opposite_trigger.type, number: resolved.number });
+    }
   });
   return used;
 }
@@ -401,12 +405,16 @@ function renderMappingsList() {
     const undoLine = mapping.undo_trigger
       ? '<span class="mapping-trigger-undo">Undo: ' + escapeHtml(describeTrigger(mapping.undo_trigger)) + "</span>"
       : "";
+    const oppositeLine = mapping.opposite_trigger
+      ? '<span class="mapping-trigger-undo">Gegenteil: ' + escapeHtml(describeTrigger(mapping.opposite_trigger)) + "</span>"
+      : "";
     li.innerHTML =
       '<span class="mapping-name">' + escapeHtml(mapping.name || "(ohne Namen)") + "</span>" +
       '<span class="mapping-kind' + (fixed ? " mapping-kind-fixed" : "") + '">' + kind + "</span>" +
       '<span class="mapping-trigger-group">' +
         '<span class="mapping-trigger">' + escapeHtml(describeTrigger(mapping.trigger)) + "</span>" +
         undoLine +
+        oppositeLine +
       "</span>" +
       '<button type="button" class="mapping-edit-btn" data-index="' + index + '">Bearbeiten</button>';
     list.appendChild(li);
@@ -450,10 +458,17 @@ function refreshOscTriggerFields() {
   const triggerInput = $("m-osc-trigger-number");
   const undoInput = $("m-undo-number");
   const undoActive = $("m-save-state").checked;
+  const oppositeInput = $("m-opposite-number");
+  const oppositeActive = !!oppositeInput.value.trim();
 
   const triggerResolved = resolveNoteInput(triggerInput.value);
   const undoResolved = undoActive ? resolveNoteInput(undoInput.value) : null;
-  const siblingConflict = !!(triggerResolved && undoResolved && triggerResolved.number === undoResolved.number);
+  const oppositeResolved = oppositeActive ? resolveNoteInput(oppositeInput.value) : null;
+  const pairConflict = (a, b) => !!(a && b && a.number === b.number);
+  const siblingConflict =
+    pairConflict(triggerResolved, undoResolved) ||
+    pairConflict(triggerResolved, oppositeResolved) ||
+    pairConflict(undoResolved, oppositeResolved);
 
   const triggerDup =
     siblingConflict || (!!triggerResolved && isDuplicateTrigger(triggerType, triggerResolved.number, editingIndex, "trigger"));
@@ -463,6 +478,18 @@ function refreshOscTriggerFields() {
     const undoDup =
       siblingConflict || (!!undoResolved && isDuplicateTrigger(triggerType, undoResolved.number, editingIndex, "undo_trigger"));
     applyNoteFieldDisplay(undoInput, $("m-undo-resolved"), undoResolved, undoDup);
+  }
+
+  const oppositeResolvedSpan = $("m-opposite-resolved");
+  if (oppositeActive) {
+    const oppositeDup =
+      siblingConflict ||
+      (!!oppositeResolved && isDuplicateTrigger(triggerType, oppositeResolved.number, editingIndex, "opposite_trigger"));
+    applyNoteFieldDisplay(oppositeInput, oppositeResolvedSpan, oppositeResolved, oppositeDup);
+  } else {
+    oppositeResolvedSpan.textContent = "";
+    oppositeResolvedSpan.className = "note-resolved";
+    oppositeInput.classList.remove("field-error");
   }
 }
 
@@ -613,18 +640,40 @@ function openEditor(index) {
     } else {
       $("m-undo-number").value = nextAvailableNumberAfter(Number(triggerNumber), triggerType, index, "undo_trigger");
     }
+
+    const opposite = mapping ? mapping.opposite_trigger : null;
+    $("m-opposite-number").value = opposite ? opposite.number : "";
+
     renderActionsEditor(mapping ? mapping.actions || [] : [{ path: "", value: "midi_value" }]);
   }
 
   updateUndoVisibility();
   updateUndoTypeHint();
+  updateOppositePlaceholder();
   refreshChannelTriggerField();
   refreshOscTriggerFields();
 }
 
 function updateUndoTypeHint() {
+  const type = $("m-trigger-type").value;
   const hint = $("m-undo-type-hint");
-  if (hint) hint.textContent = $("m-trigger-type").value;
+  if (hint) hint.textContent = type;
+  const oppositeHint = $("m-opposite-type-hint");
+  if (oppositeHint) oppositeHint.textContent = type;
+}
+
+// Shown as a placeholder (not pre-filled - the field must stay empty by default,
+// since empty is what keeps a toggle action query-based/single-note) so the user
+// still gets the same "next free note" suggestion as everywhere else if they
+// decide to use it.
+function updateOppositePlaceholder() {
+  const input = $("m-opposite-number");
+  if (!input) return;
+  const triggerType = $("m-trigger-type").value;
+  const triggerResolved = resolveNoteInput($("m-osc-trigger-number").value);
+  const base = triggerResolved ? triggerResolved.number : 59;
+  const suggestion = nextAvailableNumberAfter(base, triggerType, editingIndex, "opposite_trigger");
+  input.placeholder = `optional – Vorschlag: ${suggestion} (${midiNumberToNoteName(suggestion)})`;
 }
 
 function closeEditor() {
@@ -702,6 +751,24 @@ async function saveMapping() {
       }
       mapping.undo_trigger = { type: triggerType, number: undoResolved.number };
     }
+
+    const oppositeRaw = $("m-opposite-number").value.trim();
+    if (oppositeRaw) {
+      const oppositeResolved = resolveNoteInput(oppositeRaw);
+      if (!oppositeResolved) {
+        showMessage(msg, "Ungültige Gegenteil-Note/Nummer.", true);
+        return;
+      }
+      if (
+        oppositeResolved.number === resolved.number ||
+        (mapping.undo_trigger && oppositeResolved.number === mapping.undo_trigger.number) ||
+        isDuplicateTrigger(triggerType, oppositeResolved.number, editingIndex, "opposite_trigger")
+      ) {
+        showMessage(msg, "Diese Gegenteil-Note wird bereits von einem anderen Feld oder Mapping verwendet.", true);
+        return;
+      }
+      mapping.opposite_trigger = { type: triggerType, number: oppositeResolved.number };
+    }
   }
 
   if (editingIndex === null) {
@@ -746,12 +813,17 @@ function initMappingsTab() {
   });
 
   $("m-trigger-number").addEventListener("input", refreshChannelTriggerField);
-  $("m-osc-trigger-number").addEventListener("input", refreshOscTriggerFields);
+  $("m-osc-trigger-number").addEventListener("input", () => {
+    updateOppositePlaceholder();
+    refreshOscTriggerFields();
+  });
   $("m-trigger-type").addEventListener("change", () => {
     updateUndoTypeHint();
+    updateOppositePlaceholder();
     refreshOscTriggerFields();
   });
   $("m-undo-number").addEventListener("input", refreshOscTriggerFields);
+  $("m-opposite-number").addEventListener("input", refreshOscTriggerFields);
 }
 
 // ---- Test panel ----

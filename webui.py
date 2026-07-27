@@ -137,7 +137,7 @@ def _validate_mappings(mappings: List[Any]) -> List[str]:
         label = mapping.get("name", f"#{i}")
         if not mapping.get("trigger"):
             errors.append(f"Mapping #{i} ('{label}'): missing 'trigger'")
-        for trigger_key in ("trigger", "undo_trigger"):
+        for trigger_key in ("trigger", "undo_trigger", "opposite_trigger"):
             trigger = mapping.get(trigger_key)
             if not trigger:
                 continue

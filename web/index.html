@@ -195,6 +195,19 @@
           <p class="hint">Der Undo-Trigger hat immer denselben Trigger-Typ wie oben (<span id="m-undo-type-hint">note_on</span>).</p>
         </div>
 
+        <div class="form-row">
+          <label>Gegenteil-Note / Nummer (optional)
+            <input id="m-opposite-number" type="text">
+          </label>
+          <span id="m-opposite-resolved" class="note-resolved"></span>
+        </div>
+        <p class="hint">
+          Nur relevant für Aktionen mit Wert-Modus "Toggle": leer = echter Toggle mit der Note oben (fragt vor jedem
+          Senden den aktuellen Pult-Zustand ab). Ausgefüllt = die Note oben löst immer <code>toggle_on_value</code> aus,
+          diese zweite Note immer <code>toggle_off_value</code> - ohne Abfrage, zwei feste Tasten statt einer rätselnden.
+          Hat automatisch denselben Trigger-Typ wie oben (<span id="m-opposite-type-hint">note_on</span>).
+        </p>
+
         <h4>Aktionen</h4>
         <div id="m-actions-list"></div>
         <button id="m-action-add" type="button">+ Aktion hinzufügen</button>

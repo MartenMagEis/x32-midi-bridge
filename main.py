@@ -142,6 +142,7 @@ def normalize_mappings(mappings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for mapping in mappings:
         normalize_trigger(mapping.get("trigger"))
         normalize_trigger(mapping.get("undo_trigger"))
+        normalize_trigger(mapping.get("opposite_trigger"))
     return mappings
 
 
@@ -618,18 +619,31 @@ class X32MidiBridge:
             return
 
         mapping = self.find_mapping(event)
+        is_opposite = False
+        if mapping is None:
+            mapping = self.find_opposite_mapping(event)
+            is_opposite = mapping is not None
+
         if not mapping:
             logger.debug("No mapping for event %s", event)
             return
 
-        self._notify_mapping_fired(mapping.get("name", "?"), "trigger")
+        self._notify_mapping_fired(mapping.get("name", "?"), "opposite" if is_opposite else "trigger")
 
         if mapping.get("action") in ("set_channel", "add_channel", "set_channel_class"):
             self.handle_channel_action(mapping, event)
             return
 
+        # With an opposite_trigger configured, "toggle" actions on this mapping become
+        # deterministic: the primary note always sends toggle_on_value, the opposite note
+        # always sends toggle_off_value - no OSC query, no dependency on the console's
+        # actual state (two independent, always-correct buttons instead of one button that
+        # has to guess the current state). Without opposite_trigger, toggle keeps its
+        # original query-based single-note behavior (see _resolve_action_value).
+        toggle_forced = not is_opposite if mapping.get("opposite_trigger") else None
+
         for action_desc in mapping.get("actions", []):
-            await self.execute_mapping_action(action_desc, event, mapping.get("save_state", False))
+            await self.execute_mapping_action(action_desc, event, mapping.get("save_state", False), toggle_forced)
 
     def _notify_mapping_fired(self, name: str, kind: str) -> None:
         # Optional hook the web UI wires up (see webui.start_web_server) to
@@ -648,6 +662,13 @@ class X32MidiBridge:
         for mapping in self.mappings:
             undo_trigger = mapping.get("undo_trigger")
             if undo_trigger and self.match_trigger(undo_trigger, event):
+                return mapping
+        return None
+
+    def find_opposite_mapping(self, event: MidiEvent) -> Optional[Dict[str, Any]]:
+        for mapping in self.mappings:
+            opposite_trigger = mapping.get("opposite_trigger")
+            if opposite_trigger and self.match_trigger(opposite_trigger, event):
                 return mapping
         return None
 
@@ -693,7 +714,9 @@ class X32MidiBridge:
         escaped = escaped.replace(re.escape("{active_channels}"), r"\d+")
         return re.compile(f"^{escaped}$")
 
-    async def execute_mapping_action(self, action_desc: Dict[str, Any], event: MidiEvent, save_state: bool):
+    async def execute_mapping_action(
+        self, action_desc: Dict[str, Any], event: MidiEvent, save_state: bool, toggle_forced: Optional[bool] = None
+    ):
         path_template = action_desc["path"]
         # relative_db with a velocity-scaled delta (db_delta: "midi_value") uses the velocity to
         # compute the dB amount, same as a plain midi_value action uses it for the OSC value
@@ -706,7 +729,7 @@ class X32MidiBridge:
         )
 
         if uses_midi_value:
-            await self.send_to_active_channels(path_template, action_desc, event, save_state)
+            await self.send_to_active_channels(path_template, action_desc, event, save_state, toggle_forced)
             return
 
         if self.is_hybrid_single_channel(event.velocity, action_desc):
@@ -720,24 +743,30 @@ class X32MidiBridge:
                 channel = max(CHANNEL_MIN, min(CHANNEL_MAX, event.velocity))
                 path = path_template.replace("{active_channels}", f"{channel:02d}")
             await self._save_state_if_needed(path, save_state)
-            value = await self._resolve_action_value(action_desc, event, path)
+            value = await self._resolve_action_value(action_desc, event, path, toggle_forced)
             if value is not None:
                 await self.send_osc_message(path, [value])
             return
 
         if self.is_hybrid_multi_channel(event.velocity, action_desc):
-            await self.send_to_active_channels(path_template, action_desc, event, save_state)
+            await self.send_to_active_channels(path_template, action_desc, event, save_state, toggle_forced)
             return
 
-        await self.send_to_active_channels(path_template, action_desc, event, save_state)
+        await self.send_to_active_channels(path_template, action_desc, event, save_state, toggle_forced)
 
-    async def _resolve_action_value(self, action_desc: Dict[str, Any], event: MidiEvent, path: str) -> Any:
+    async def _resolve_action_value(
+        self, action_desc: Dict[str, Any], event: MidiEvent, path: str, toggle_forced: Optional[bool] = None
+    ) -> Any:
         raw_value = action_desc.get("value", 1)
         if raw_value == "midi_value":
             return self.scale(event.velocity, action_desc.get("scale"))
         if raw_value == "toggle":
             on_value = action_desc.get("toggle_on_value", 1)
             off_value = action_desc.get("toggle_off_value", 0)
+            if toggle_forced is not None:
+                # Deterministic two-note mode (mapping has an opposite_trigger) - which
+                # note fired already tells us the value, no need to ask the console.
+                return on_value if toggle_forced else off_value
             current = await self.query_osc_value(path)
             if current is None:
                 logger.warning(
@@ -816,7 +845,12 @@ class X32MidiBridge:
         return velocity in (0, 127)
 
     async def send_to_active_channels(
-        self, path_template: str, action_desc: Dict[str, Any], event: MidiEvent, save_state: bool = False
+        self,
+        path_template: str,
+        action_desc: Dict[str, Any],
+        event: MidiEvent,
+        save_state: bool = False,
+        toggle_forced: Optional[bool] = None,
     ):
         if "{active_class}" in path_template:
             entries = [(cls, idx) for cls, indices in self.class_selections.items() for idx in indices]
@@ -830,7 +864,7 @@ class X32MidiBridge:
                     "{active_channels}", f"{idx:0{padding}d}"
                 )
                 await self._save_state_if_needed(path, save_state)
-                value = await self._resolve_action_value(action_desc, event, path)
+                value = await self._resolve_action_value(action_desc, event, path, toggle_forced)
                 if value is not None:
                     await self.send_osc_message(path, [value])
             return
@@ -843,7 +877,7 @@ class X32MidiBridge:
         for channel in channels:
             path = path_template.replace("{active_channels}", f"{channel:02d}")
             await self._save_state_if_needed(path, save_state)
-            value = await self._resolve_action_value(action_desc, event, path)
+            value = await self._resolve_action_value(action_desc, event, path, toggle_forced)
             if value is not None:
                 await self.send_osc_message(path, [value])
 
