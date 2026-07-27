@@ -231,6 +231,11 @@ input, select {
   background-color: #fefcbf;
 }
 
+.mapping-item-editing {
+  background-color: #f3eefc;
+  box-shadow: inset 3px 0 0 #764ba2;
+}
+
 .mapping-name {
   font-weight: 600;
   flex: 1 1 auto;

@@ -164,6 +164,7 @@ class X32MidiBridge:
         self.event_queue: asyncio.Queue[MidiEvent] = asyncio.Queue()
         self.active_class: str = "ch"
         self.class_selections: Dict[str, List[int]] = {}
+        self.active_send_bus: Optional[int] = None
         self.undo_cache: Dict[str, Any] = {}
         self.x32_ip: Optional[str] = None
         self.x32_port: int = config.get("x32_port", 10023)
@@ -630,7 +631,7 @@ class X32MidiBridge:
 
         self._notify_mapping_fired(mapping.get("name", "?"), "opposite" if is_opposite else "trigger")
 
-        if mapping.get("action") in ("set_channel", "add_channel", "set_channel_class"):
+        if mapping.get("action") in ("set_channel", "add_channel", "set_channel_class", "set_send_bus"):
             self.handle_channel_action(mapping, event)
             return
 
@@ -685,6 +686,16 @@ class X32MidiBridge:
             logger.info("Active channel class set to %s", new_class)
             return
 
+        if action == "set_send_bus":
+            # A send target is a single scalar (there's exactly one destination bus a
+            # channel-to-bus send path can point at), unlike active_class/class_selections
+            # which supports multiple simultaneously-active channels per class - so this
+            # is deliberately "set" only, no "add_send_bus" counterpart.
+            min_b, max_b, _padding = CLASS_ADDRESS_INFO["bus"]
+            self.active_send_bus = max(min_b, min(max_b, event.velocity))
+            logger.info("Active send-bus target set to %s", self.active_send_bus)
+            return
+
         min_c, max_c, _padding = CLASS_ADDRESS_INFO.get(self.active_class, (CHANNEL_MIN, CHANNEL_MAX, 2))
         channel = max(min_c, min(max_c, event.velocity))
         selection = self.class_selections.setdefault(self.active_class, [])
@@ -712,7 +723,23 @@ class X32MidiBridge:
         escaped = re.escape(path_template)
         escaped = escaped.replace(re.escape("{active_class}"), r"[a-z]+")
         escaped = escaped.replace(re.escape("{active_channels}"), r"\d+")
+        escaped = escaped.replace(re.escape("{active_send_bus}"), r"\d+")
         return re.compile(f"^{escaped}$")
+
+    def _apply_send_bus_placeholder(self, path: str) -> str:
+        """{active_send_bus} addresses a *second*, independent number in a mapping
+        path (the mix-bus target of a channel send, e.g. /ch/{active_channels}/mix/
+        {active_send_bus}/on) - separate from {active_class}/{active_channels},
+        which only ever carry one number (the channel/strip itself). Set via the
+        set_send_bus fixed action (see handle_channel_action)."""
+        if "{active_send_bus}" not in path:
+            return path
+        bus = self.active_send_bus
+        if bus is None:
+            logger.warning("No send-bus target selected (set_send_bus never fired) - defaulting to bus 1")
+            bus = 1
+        _min_b, _max_b, padding = CLASS_ADDRESS_INFO["bus"]
+        return path.replace("{active_send_bus}", f"{bus:0{padding}d}")
 
     async def execute_mapping_action(
         self, action_desc: Dict[str, Any], event: MidiEvent, save_state: bool, toggle_forced: Optional[bool] = None
@@ -742,6 +769,7 @@ class X32MidiBridge:
             else:
                 channel = max(CHANNEL_MIN, min(CHANNEL_MAX, event.velocity))
                 path = path_template.replace("{active_channels}", f"{channel:02d}")
+            path = self._apply_send_bus_placeholder(path)
             await self._save_state_if_needed(path, save_state)
             value = await self._resolve_action_value(action_desc, event, path, toggle_forced)
             if value is not None:
@@ -863,6 +891,7 @@ class X32MidiBridge:
                 path = path_template.replace("{active_class}", cls).replace(
                     "{active_channels}", f"{idx:0{padding}d}"
                 )
+                path = self._apply_send_bus_placeholder(path)
                 await self._save_state_if_needed(path, save_state)
                 value = await self._resolve_action_value(action_desc, event, path, toggle_forced)
                 if value is not None:
@@ -876,6 +905,7 @@ class X32MidiBridge:
             self.class_selections["ch"] = channels
         for channel in channels:
             path = path_template.replace("{active_channels}", f"{channel:02d}")
+            path = self._apply_send_bus_placeholder(path)
             await self._save_state_if_needed(path, save_state)
             value = await self._resolve_action_value(action_desc, event, path, toggle_forced)
             if value is not None:

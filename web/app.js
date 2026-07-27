@@ -322,15 +322,18 @@ function describeTrigger(trigger) {
   return `${trigger.type} ${label}`;
 }
 
-// set_channel/add_channel/set_channel_class are fixed, predefined mapping
-// slots: always present in the list, not deletable, and not something a
+// set_channel/add_channel/set_channel_class/set_send_bus are fixed, predefined
+// mapping slots: always present in the list, not deletable, and not something a
 // user can create another instance of - there is exactly one of each, and
 // its action never changes. If you don't need one, point its note at
 // something you never play; the slot itself always stays.
 function isFixedMapping(mapping) {
   return !!(
     mapping &&
-    (mapping.action === "set_channel" || mapping.action === "add_channel" || mapping.action === "set_channel_class")
+    (mapping.action === "set_channel" ||
+      mapping.action === "add_channel" ||
+      mapping.action === "set_channel_class" ||
+      mapping.action === "set_send_bus")
   );
 }
 
@@ -344,7 +347,8 @@ async function ensureFixedMappings() {
   const hasSetChannel = mappingsData.some((m) => m.action === "set_channel");
   const hasAddChannel = mappingsData.some((m) => m.action === "add_channel");
   const hasSetClass = mappingsData.some((m) => m.action === "set_channel_class");
-  if (hasSetChannel && hasAddChannel && hasSetClass) return;
+  const hasSetSendBus = mappingsData.some((m) => m.action === "set_send_bus");
+  if (hasSetChannel && hasAddChannel && hasSetClass && hasSetSendBus) return;
 
   if (!hasSetChannel) {
     mappingsData.unshift({
@@ -367,6 +371,13 @@ async function ensureFixedMappings() {
       action: "set_channel_class",
     });
   }
+  if (!hasSetSendBus) {
+    mappingsData.push({
+      name: "global_set_send_bus",
+      trigger: { type: "note_on", number: nextAvailableNumber("note_on", null, null) },
+      action: "set_send_bus",
+    });
+  }
   await persistMappings($("mappings-message"), "Feste Kanal-Mappings ergänzt.");
 }
 
@@ -375,7 +386,7 @@ async function ensureFixedMappings() {
 // actually sit in mappingsData/the JSON file - ensureFixedMappings() adds a
 // missing one whereever is easiest (unshift/push), so array position alone
 // can't be relied on to keep them together.
-const _FIXED_MAPPING_ORDER = ["set_channel", "add_channel", "set_channel_class"];
+const _FIXED_MAPPING_ORDER = ["set_channel", "add_channel", "set_channel_class", "set_send_bus"];
 
 function renderMappingsList() {
   const list = $("mappings-list");
@@ -400,7 +411,8 @@ function renderMappingsList() {
     if (fixed) {
       if (mapping.action === "set_channel") kind = "Kanal setzen (fest)";
       else if (mapping.action === "add_channel") kind = "Kanal hinzufügen (fest)";
-      else kind = "Klasse wählen (fest)";
+      else if (mapping.action === "set_channel_class") kind = "Klasse wählen (fest)";
+      else kind = "Send-Bus wählen (fest)";
     }
     const undoLine = mapping.undo_trigger
       ? '<span class="mapping-trigger-undo">Undo: ' + escapeHtml(describeTrigger(mapping.undo_trigger)) + "</span>"
@@ -420,8 +432,21 @@ function renderMappingsList() {
     list.appendChild(li);
   });
   list.querySelectorAll(".mapping-edit-btn").forEach((btn) => {
-    btn.addEventListener("click", () => openEditor(parseInt(btn.dataset.index, 10)));
+    btn.addEventListener("click", () => {
+      highlightEditingRow(btn.closest(".mapping-item"));
+      openEditor(parseInt(btn.dataset.index, 10));
+    });
   });
+}
+
+// The editor card lives below the list (see index.html) - on a long mappings
+// list the row a user just clicked "Bearbeiten" on can be far above the
+// editor, off-screen. Highlighting the row (kept until the editor closes/
+// the list re-renders) lets the user still tell which mapping they're
+// editing after scrolling down to it.
+function highlightEditingRow(row) {
+  document.querySelectorAll(".mapping-item-editing").forEach((el) => el.classList.remove("mapping-item-editing"));
+  if (row) row.classList.add("mapping-item-editing");
 }
 
 function updateUndoVisibility() {
@@ -606,6 +631,7 @@ function openEditor(index) {
   const fixed = isFixedMapping(mapping);
 
   $("mapping-editor-card").hidden = false;
+  $("mapping-editor-card").scrollIntoView({ behavior: "smooth", block: "start" });
   $("mapping-editor-title").textContent = mapping ? "Mapping bearbeiten: " + mapping.name : "Neues Mapping";
   $("mapping-editor-message").textContent = "";
   $("mapping-delete").hidden = index === null || fixed;
@@ -621,10 +647,19 @@ function openEditor(index) {
     } else if (mapping.action === "add_channel") {
       $("m-channel-label").textContent =
         "Kanal hinzufügen (add_channel): ergänzt den über die Velocity übergebenen Kanal zur aktiven Auswahl der aktuellen Klasse.";
-    } else {
+    } else if (mapping.action === "set_channel_class") {
       $("m-channel-label").textContent =
         "Klasse wählen (set_channel_class): legt fest, auf welche Sektion sich set_channel/add_channel als Nächstes beziehen - " +
-        "Velocity 1 = Kanäle, 2 = Busse, 3 = Aux In, 4 = FX Return, 5 = Matrix, 6 = DCA.";
+        "Velocity 1 = Kanäle, 2 = Busse, 3 = Aux In, 4 = FX Return, 5 = Matrix, 6 = DCA. " +
+        "Für Sends EINES Kanals auf einen Mixbus (z. B. Channel 2 auf Bus 10 muten) NICHT hierüber lösen - dafür gibt es die " +
+        "separate Aktion 'Send-Bus wählen' (set_send_bus) weiter unten in der Mapping-Liste, plus den Pfad-Platzhalter " +
+        "{active_send_bus} in der Aktion selbst, z. B. /ch/{active_channels}/mix/{active_send_bus}/on.";
+    } else {
+      $("m-channel-label").textContent =
+        "Send-Bus wählen (set_send_bus): legt fest, auf welchen Mixbus sich der Platzhalter {active_send_bus} in Mapping-Aktionen " +
+        "bezieht - Velocity 1-16 = Bus 1-16 (Werte darüber/darunter werden geklemmt). Unabhängig von Klasse/Kanalauswahl: " +
+        "z. B. 'Channel 2 auf Bus 10 muten' = zuerst set_send_bus mit Velocity 10, dann set_channel mit Velocity 2, dann ein " +
+        "Mapping mit Pfad /ch/{active_channels}/mix/{active_send_bus}/on.";
     }
     $("m-trigger-number").value = mapping.trigger.number;
   } else {
@@ -679,6 +714,7 @@ function updateOppositePlaceholder() {
 function closeEditor() {
   editingIndex = null;
   $("mapping-editor-card").hidden = true;
+  highlightEditingRow(null);
 }
 
 async function persistMappings(msgEl, successText) {
@@ -795,7 +831,10 @@ async function deleteMapping() {
 }
 
 function initMappingsTab() {
-  $("mapping-add").addEventListener("click", () => openEditor(null));
+  $("mapping-add").addEventListener("click", () => {
+    highlightEditingRow(null);
+    openEditor(null);
+  });
   $("mapping-cancel").addEventListener("click", closeEditor);
   $("mapping-save").addEventListener("click", saveMapping);
   $("mapping-delete").addEventListener("click", deleteMapping);

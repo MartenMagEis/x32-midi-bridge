@@ -15,7 +15,8 @@ Diese Datei (`midi_osc_mappings.json`) verknüpft MIDI-Eingänge (Noten und CC-B
 
 - **`set_channel`** (Kanalauswahl der aktuellen Klasse überschreiben): Löscht die aktive Auswahl der aktuellen Klasse und setzt den über die MIDI-Velocity übergebenen Index als exklusive Auswahl.
 - **`add_channel`** (Index zur Auswahl der aktuellen Klasse hinzufügen): Behält bestehende Indizes bei und fügt den über die Velocity definierten Index hinzu.
-- **`set_channel_class`** (Klasse wechseln): Legt über die Velocity fest, auf welche X32-Sektion (Kanäle/Bus/Aux In/FX Return/Matrix/DCA) sich `set_channel`/`add_channel` als Nächstes beziehen — siehe die Velocity-Tabelle weiter unten. Auswahlen anderer Klassen bleiben dabei erhalten.
+- **`set_channel_class`** (Klasse wechseln): Legt über die Velocity fest, auf welche X32-Sektion (Kanäle/Bus/Aux In/FX Return/Matrix/DCA) sich `set_channel`/`add_channel` als Nächstes beziehen — siehe die Velocity-Tabelle weiter unten. Auswahlen anderer Klassen bleiben dabei erhalten. **Nicht** zu verwechseln mit `set_send_bus` (siehe [Sends](#sends-ein-kanal-auf-einen-bestimmten-mixbus-set_send_bus-active_send_bus) weiter unten) — das ist eine komplett eigene, zweite Auswahl-Dimension für den Ziel-Bus eines Kanal-Sends, keine weitere Klasse.
+- **`set_send_bus`** (Send-Ziel-Bus wählen): Legt über die Velocity (1-16 = Bus 1-16) fest, welchen Mixbus der Platzhalter `{active_send_bus}` in Mapping-Aktionen adressiert — für Sends eines Kanals auf einen bestimmten Mixbus, siehe [Sends](#sends-ein-kanal-auf-einen-bestimmten-mixbus-set_send_bus-active_send_bus) weiter unten.
 - **Statische Mappings** (z. B. Mutes): Senden feste OSC-Werte an die Zielkanäle. `"value"` ist eine Zahl.
 - **Dynamische Werte** (z. B. Volume / Pan): Verwenden `"value": "midi_value"`, um den MIDI-Eingangswert (0-127) dynamisch einzulesen und zu skalieren.
 - **Toggle** (z. B. Mute per einem einzigen Befehl an-/ausschalten): `"value": "toggle"` fragt vor dem Senden den aktuellen Ist-Wert am Zielpfad ab (`query_osc_value`) und sendet den jeweils anderen der beiden konfigurierten Werte zurück — standardmäßig `"toggle_on_value": 1` / `"toggle_off_value": 0`, beide über die Aktion anpassbar. Unterliegt denselben Hybrid-Kanal-Regeln wie ein fester Wert (Velocity wählt den Kanal, nicht den Wert) — ein Toggle ist nur eine andere "welchen Wert senden"-Strategie, kein eigener Adressierungsmodus. Schlägt die Abfrage fehl (Timeout), wird `toggle_on_value` gesendet und eine Warnung geloggt.
@@ -129,6 +130,26 @@ Wie `set_channel`/`add_channel` ist `set_channel_class` ein fester, nicht lösch
 **Eine Mapping-Definition für alle Klassen:** Damit nicht jede Aktion (Mute, Fader, ...) einmal pro Klasse dupliziert werden muss, gibt es einen zusätzlichen Platzhalter `{active_class}` für den OSC-Pfad, z. B. `"path": "/{active_class}/{active_channels}/mix/on"`. Eine so definierte Aktion iteriert beim Auslösen über **alle** Klassen mit nicht-leerer Auswahl gleichzeitig und sendet pro Element einen eigenen OSC-Befehl (ein einziges "Mute"-Mapping kann so in einem Rutsch ein paar Kanäle, eine DCA und einen Bus gleichzeitig muten). Bestehende Mappings mit hartkodiertem `/ch/...`-Pfad (ohne `{active_class}`) sind davon komplett unberührt — sie beziehen sich weiterhin ausschließlich auf die `ch`-Auswahl, unabhängig davon, welche Klasse gerade über `set_channel_class` aktiv ist.
 
 **Echte Grenze, die bleibt:** Eine klassenübergreifende Aktion funktioniert nur für OSC-Felder, die es in jeder beteiligten Klasse gibt (Mute/Fader: überall vorhanden). Pan gibt es z. B. bei DCA nicht — eine `{active_class}`-Pan-Aktion, deren Auswahl eine DCA enthält, würde für den DCA-Eintrag einen ungültigen OSC-Pfad erzeugen. Für Mute/Fader ist das unproblematisch.
+
+### Sends: ein Kanal auf einen bestimmten Mixbus (`set_send_bus`, `{active_send_bus}`)
+
+`{active_class}`/`{active_channels}` wählen immer nur **eine** Nummer (welcher Kanal/welche Klasse). Ein Channel-Send auf einen Mixbus braucht aber **zwei** unabhängige Nummern im selben OSC-Pfad — den Quellkanal *und* den Ziel-Bus, z. B. `/ch/02/mix/10/on` (Kanal 2, Send auf Bus 10). Dafür bewusst **keine** Erweiterung von `set_channel_class` (dessen Velocity-Tabelle wählt eine *Adressfamilie*, keine zweite Zahl) — stattdessen eine eigene, unabhängige Aktion und ein eigener Platzhalter, analog zu `set_channel_class`:
+
+**Neue feste Aktion `set_send_bus`:** Legt über die Velocity fest, welchen Mixbus der Platzhalter `{active_send_bus}` als Nächstes adressiert — direkt Velocity = Busnummer, keine Umwege über eine Tabelle:
+
+| Velocity | Bus |
+|---|---|
+| 1 | Mix 1 |
+| ... | ... |
+| 16 | Mix 16 |
+
+Werte außerhalb 1-16 werden geklemmt (0 → 1, 127 → 16). Wie `set_channel`/`add_channel`/`set_channel_class` ist `set_send_bus` ein fester, nicht löschbarer Eintrag in der Mappings-Liste (wird beim Laden automatisch ergänzt, falls er fehlt) — unabhängig von `active_class`/`class_selections`, es gibt kein `add_send_bus`, da ein Send-Ziel immer genau ein Bus zur Zeit ist (kein Mehrfach-Ziel wie bei der Kanalauswahl).
+
+**Verwendung im Mapping:** `{active_send_bus}` einfach zusätzlich zu `{active_channels}` im Pfad verwenden, z. B. um den Send von Kanal 2 auf Bus 10 zu muten:
+```json
+{ "path": "/ch/{active_channels}/mix/{active_send_bus}/on", "value": "toggle" }
+```
+Ablauf: `set_send_bus` (Velocity 10) → `set_channel` (Velocity 2) → obiges Mapping auslösen. Funktioniert mit allen Wert-Modi (fest/`midi_value`/Toggle/`relative_db`) und dem Hybrid-Einzel-/Gruppen-Modus genau wie `{active_channels}` allein — nur dass zusätzlich der Send-Ziel-Bus in den Pfad eingesetzt wird. Ist `{active_send_bus}` im Pfad, `set_send_bus` aber noch nie ausgelöst worden, wird auf Bus 1 zurückgefallen (mit einer Log-Warnung) — analog zum "keine Kanäle ausgewählt"-Fallback von `{active_channels}`.
 
 ### Note-On mit Velocity 0 wird wie ein echtes Note-Off behandelt
 
