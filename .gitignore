@@ -12,3 +12,9 @@ Thumbs.db
 uv.lock
 bridge.log
 bridge.log.*
+
+# Real, per-installation config/mappings - never tracked, so a git pull/reset can never
+# overwrite an installation's own settings/mappings. See system_config.example.json /
+# midi_osc_mappings.example.json (tracked) and _bootstrap_from_example in main.py.
+system_config.json
+midi_osc_mappings.json

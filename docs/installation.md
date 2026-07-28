@@ -17,6 +17,14 @@ Aktiviere die Umgebung je nach Betriebssystem im Terminal:
 - **Windows (CMD/PowerShell):** `.venv\Scripts\activate`
 - **macOS / Linux (bash/zsh):** `source .venv/bin/activate`
 
+`system_config.json`/`midi_osc_mappings.json` (die *echte*, laufende Konfiguration/Mappings dieser
+Installation) sind bewusst **nicht** Teil des Git-Repos - beim allerersten Start legt die Bridge
+sie automatisch aus den mitgelieferten `system_config.example.json`/
+`midi_osc_mappings.example.json` an, falls sie noch nicht existieren (siehe
+`_bootstrap_from_example` in `main.py`). Existieren sie bereits, fasst kein `git pull`/Update sie
+danach je wieder an - eigene Anpassungen und selbst gebaute Mappings sind damit vor einem
+versehentlichen Überschreiben durch ein Update sicher.
+
 ## Schritt 2: RTP-MIDI-Verbindung herstellen (Sender-Konfiguration)
 
 Die Bridge fungiert als eigenständiger RTP-MIDI-Server (AppleMIDI-Protokoll), der einen Netzwerk-Port (Standard: 5004, konfigurierbar über `rtp_local_port`) öffnet und sich via Bonjour/mDNS als `_apple-midi._udp` im Netzwerk ankündigt.

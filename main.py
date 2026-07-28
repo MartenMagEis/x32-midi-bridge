@@ -5,6 +5,7 @@ import json
 import logging
 import logging.handlers
 import re
+import shutil
 import socket
 import sys
 import threading
@@ -20,8 +21,15 @@ from pymidi.server import Handler as PymidiHandler, Server as PymidiServer
 from zeroconf import ServiceInfo, Zeroconf
 import rtmidi
 
+# The real, live config/mappings files are gitignored on purpose (see .gitignore) - they hold a
+# specific installation's own X32 IP, port overrides, and hand-built MIDI mappings, which a
+# `git pull`/plugin update must never be able to touch or overwrite. CONFIG_EXAMPLE_FILE/
+# MAPPINGS_EXAMPLE_FILE are the tracked, shipped defaults; _bootstrap_from_example (see below)
+# seeds a fresh installation's real files from them on first run only.
 CONFIG_FILE = Path("system_config.json")
 MAPPINGS_FILE = Path("midi_osc_mappings.json")
+CONFIG_EXAMPLE_FILE = Path("system_config.example.json")
+MAPPINGS_EXAMPLE_FILE = Path("midi_osc_mappings.example.json")
 LOG_FILE = Path("bridge.log")
 
 logger = logging.getLogger("x32-midi-bridge")
@@ -1097,11 +1105,25 @@ def _load_json_or_exit(path: Path) -> Any:
         sys.exit(1)
 
 
+def _bootstrap_from_example(path: Path, example_path: Path) -> None:
+    """First-run convenience only: if the real file doesn't exist yet, seed it from the
+    tracked example shipped in the repo. Never touches an existing file - once `path` exists,
+    it's the sole source of truth, and since the example lives at a separate, tracked filename,
+    even a `git fetch` + hard reset (see plugin_apply_update on the x32-recorder side) can never
+    overwrite it again."""
+    if path.exists() or not example_path.exists():
+        return
+    shutil.copyfile(example_path, path)
+    print(f"'{path}' nicht gefunden - mit Standardwerten aus '{example_path}' angelegt.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Async X32 MIDI-to-OSC Controller Daemon")
     parser.add_argument("--test", action="store_true", help="Enable CLI test mode")
     args = parser.parse_args()
 
+    _bootstrap_from_example(CONFIG_FILE, CONFIG_EXAMPLE_FILE)
+    _bootstrap_from_example(MAPPINGS_FILE, MAPPINGS_EXAMPLE_FILE)
     config = _load_json_or_exit(CONFIG_FILE)
     mappings = normalize_mappings(_load_json_or_exit(MAPPINGS_FILE))
     bridge = X32MidiBridge(config, mappings, test_mode=args.test)

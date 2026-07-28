@@ -3,6 +3,11 @@ function $(id) {
 }
 
 function showMessage(el, text, isError) {
+  if (!text) {
+    el.textContent = "";
+    el.className = "message";
+    return;
+  }
   el.textContent = text;
   el.className = "message " + (isError ? "error" : "ok");
 }
@@ -254,6 +259,10 @@ function resolveNoteInput(raw) {
 let mappingsData = [];
 let editingIndex = null; // index into mappingsData, or null when adding new
 let currentActions = [];
+// opposite_trigger is stored per-mapping (it's a MIDI trigger, not an action property), but
+// edited inline on whichever toggle action row(s) it's relevant to (see renderActionsEditor) -
+// stashed here across the openEditor -> renderActionsEditor call so the row(s) can pre-fill it.
+let currentOppositeTriggerNumber = null;
 
 function escapeHtml(text) {
   const div = document.createElement("div");
@@ -378,7 +387,11 @@ async function ensureFixedMappings() {
       action: "set_send_bus",
     });
   }
-  await persistMappings($("mappings-message"), "Feste Kanal-Mappings ergänzt.");
+  // Silent housekeeping: this runs automatically on every page load, not from a user action, so
+  // a persistent "Feste Kanal-Mappings ergänzt." success banner just sat there with no context
+  // for what it referred to. Still needs to persist the newly-added slot(s), just without the
+  // user-facing message (showMessage no-ops on an empty string).
+  await persistMappings($("mappings-message"), "");
 }
 
 // Fixed/global mappings (set_channel/add_channel/set_channel_class) always
@@ -433,17 +446,30 @@ function renderMappingsList() {
   });
   list.querySelectorAll(".mapping-edit-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      highlightEditingRow(btn.closest(".mapping-item"));
-      openEditor(parseInt(btn.dataset.index, 10));
+      const row = btn.closest(".mapping-item");
+      highlightEditingRow(row);
+      openEditor(parseInt(btn.dataset.index, 10), row);
     });
   });
 }
 
-// The editor card lives below the list (see index.html) - on a long mappings
-// list the row a user just clicked "Bearbeiten" on can be far above the
-// editor, off-screen. Highlighting the row (kept until the editor closes/
-// the list re-renders) lets the user still tell which mapping they're
-// editing after scrolling down to it.
+// The editor lives in a <li> (#mapping-editor-slot) normally parked, hidden, in
+// #mapping-editor-holder - moving it to sit right after the row being edited (or to the end of
+// the list for a brand-new mapping) is what makes it expand inline/"accordion-style" at that
+// row's position instead of appearing in a fixed spot elsewhere on the page.
+function moveEditorSlotTo(afterRow) {
+  const slot = $("mapping-editor-slot");
+  const list = $("mappings-list");
+  if (afterRow && afterRow.parentElement === list) {
+    list.insertBefore(slot, afterRow.nextSibling);
+  } else {
+    list.appendChild(slot);
+  }
+}
+
+// Kept in addition to the accordion placement above: with the editor now expanding right at the
+// row's own position, the highlight visually ties an inline-expanded panel back to "this is the
+// row it belongs to" the same way an accordion's active-item styling would.
 function highlightEditingRow(row) {
   document.querySelectorAll(".mapping-item-editing").forEach((el) => el.classList.remove("mapping-item-editing"));
   if (row) row.classList.add("mapping-item-editing");
@@ -473,27 +499,31 @@ function refreshChannelTriggerField() {
   applyNoteFieldDisplay(inputEl, $("m-trigger-resolved"), resolved, dup);
 }
 
-// OSC-kind mappings have a trigger AND (optionally) an undo-trigger note
-// field that belong to the same mapping. Checking each against saved
-// mappingsData alone misses "I just typed the same note into both fields
-// before saving" - so this refreshes both together and additionally treats
-// the other field's current (possibly unsaved) value as "used".
+// OSC-kind mappings have a trigger, an (optional) undo-trigger, and any number of toggle
+// actions' (optional) opposite-note fields - all belong to the same mapping and must be
+// checked against each other, not just against saved mappingsData, so "I just typed the same
+// note into two of these fields before saving" is caught too (their current, possibly-unsaved
+// values count as "used" here).
 function refreshOscTriggerFields() {
   const triggerType = $("m-trigger-type").value;
   const triggerInput = $("m-osc-trigger-number");
   const undoInput = $("m-undo-number");
   const undoActive = $("m-save-state").checked;
-  const oppositeInput = $("m-opposite-number");
-  const oppositeActive = !!oppositeInput.value.trim();
 
   const triggerResolved = resolveNoteInput(triggerInput.value);
   const undoResolved = undoActive ? resolveNoteInput(undoInput.value) : null;
-  const oppositeResolved = oppositeActive ? resolveNoteInput(oppositeInput.value) : null;
+
+  const oppositeInputs = Array.from($("m-actions-list").querySelectorAll(".action-opposite-number")).filter(
+    (input) => !input.hidden
+  );
+  const oppositeResolvedList = oppositeInputs.map((input) => (input.value.trim() ? resolveNoteInput(input.value) : null));
+  const anyOppositeResolved = oppositeResolvedList.find((r) => r) || null;
+
   const pairConflict = (a, b) => !!(a && b && a.number === b.number);
   const siblingConflict =
     pairConflict(triggerResolved, undoResolved) ||
-    pairConflict(triggerResolved, oppositeResolved) ||
-    pairConflict(undoResolved, oppositeResolved);
+    pairConflict(triggerResolved, anyOppositeResolved) ||
+    pairConflict(undoResolved, anyOppositeResolved);
 
   const triggerDup =
     siblingConflict || (!!triggerResolved && isDuplicateTrigger(triggerType, triggerResolved.number, editingIndex, "trigger"));
@@ -505,23 +535,40 @@ function refreshOscTriggerFields() {
     applyNoteFieldDisplay(undoInput, $("m-undo-resolved"), undoResolved, undoDup);
   }
 
-  const oppositeResolvedSpan = $("m-opposite-resolved");
-  if (oppositeActive) {
-    const oppositeDup =
-      siblingConflict ||
-      (!!oppositeResolved && isDuplicateTrigger(triggerType, oppositeResolved.number, editingIndex, "opposite_trigger"));
-    applyNoteFieldDisplay(oppositeInput, oppositeResolvedSpan, oppositeResolved, oppositeDup);
-  } else {
-    oppositeResolvedSpan.textContent = "";
-    oppositeResolvedSpan.className = "note-resolved";
-    oppositeInput.classList.remove("field-error");
+  oppositeInputs.forEach((input, i) => {
+    const span = input.nextElementSibling;
+    const resolved = oppositeResolvedList[i];
+    if (input.value.trim()) {
+      const dup =
+        siblingConflict || (!!resolved && isDuplicateTrigger(triggerType, resolved.number, editingIndex, "opposite_trigger"));
+      applyNoteFieldDisplay(input, span, resolved, dup);
+    } else {
+      span.textContent = "";
+      span.className = "note-resolved";
+      input.classList.remove("field-error");
+    }
+    span.classList.add("action-opposite-resolved");
+  });
+}
+
+// Picks the opposite_trigger value to persist for the whole mapping out of however many toggle
+// action rows currently have the field populated (usually 0 or 1 - a mapping with more than one
+// toggle action is an edge case, and they all share a single mapping-level opposite_trigger
+// anyway, so the first populated one wins).
+function collectOppositeTriggerNumberFromActions() {
+  const inputs = $("m-actions-list").querySelectorAll(".action-opposite-number");
+  for (const input of inputs) {
+    if (!input.hidden && input.value.trim()) return input.value.trim();
   }
+  return "";
 }
 
 function renderActionsEditor(actions) {
   currentActions = actions.map((a) => ({ ...a }));
   const container = $("m-actions-list");
   container.innerHTML = "";
+  const oppositeHint = oppositeNoteHint();
+  const oppositeValue = currentOppositeTriggerNumber != null ? String(currentOppositeTriggerNumber) : "";
   currentActions.forEach((action, i) => {
     const mode =
       action.value === "midi_value" ? "midi_value" :
@@ -549,6 +596,8 @@ function renderActionsEditor(actions) {
       "</select>" +
       '<input type="number" class="action-toggle-on" step="any" placeholder="An-Wert" title="An-Wert" value="' + (action.toggle_on_value ?? 1) + '" ' + (mode === "toggle" ? "" : "hidden") + ">" +
       '<input type="number" class="action-toggle-off" step="any" placeholder="Aus-Wert" title="Aus-Wert" value="' + (action.toggle_off_value ?? 0) + '" ' + (mode === "toggle" ? "" : "hidden") + ">" +
+      '<input type="text" class="action-opposite-number" placeholder="Gegenteil-Note (optional)" title="' + escapeHtml(oppositeHint) + '" value="' + escapeHtml(oppositeValue) + '" ' + (mode === "toggle" ? "" : "hidden") + ">" +
+      '<span class="action-opposite-resolved note-resolved" ' + (mode === "toggle" ? "" : "hidden") + "></span>" +
       '<select class="action-db-delta-mode" title="Woher kommt der dB-Betrag" ' + (mode === "relative_db" ? "" : "hidden") + ">" +
         '<option value="fixed">Fest</option>' +
         '<option value="midi_value">Nach Velocity</option>' +
@@ -574,14 +623,19 @@ function renderActionsEditor(actions) {
       row.querySelector(".action-scale").hidden = newMode !== "midi_value";
       row.querySelector(".action-toggle-on").hidden = newMode !== "toggle";
       row.querySelector(".action-toggle-off").hidden = newMode !== "toggle";
+      row.querySelector(".action-opposite-number").hidden = newMode !== "toggle";
+      row.querySelector(".action-opposite-resolved").hidden = newMode !== "toggle";
       updateDbDeltaFieldVisibility();
+      refreshOscTriggerFields();
     });
     row.querySelector(".action-db-delta-mode").addEventListener("change", updateDbDeltaFieldVisibility);
+    row.querySelector(".action-opposite-number").addEventListener("input", refreshOscTriggerFields);
     row.querySelector(".action-remove").addEventListener("click", () => {
       renderActionsEditor(readActionsFromDom().filter((_, idx) => idx !== i));
     });
     container.appendChild(row);
   });
+  refreshOscTriggerFields();
 }
 
 function readActionsFromDom() {
@@ -625,13 +679,13 @@ function readActionsFromDom() {
   return actions;
 }
 
-function openEditor(index) {
+function openEditor(index, anchorRow) {
   editingIndex = index;
   const mapping = index === null ? null : mappingsData[index];
   const fixed = isFixedMapping(mapping);
 
-  $("mapping-editor-card").hidden = false;
-  $("mapping-editor-card").scrollIntoView({ behavior: "smooth", block: "start" });
+  moveEditorSlotTo(anchorRow || null);
+  $("mapping-editor-card").scrollIntoView({ behavior: "smooth", block: "nearest" });
   $("mapping-editor-title").textContent = mapping ? "Mapping bearbeiten: " + mapping.name : "Neues Mapping";
   $("mapping-editor-message").textContent = "";
   $("mapping-delete").hidden = index === null || fixed;
@@ -676,44 +730,40 @@ function openEditor(index) {
       $("m-undo-number").value = nextAvailableNumberAfter(Number(triggerNumber), triggerType, index, "undo_trigger");
     }
 
-    const opposite = mapping ? mapping.opposite_trigger : null;
-    $("m-opposite-number").value = opposite ? opposite.number : "";
-
+    currentOppositeTriggerNumber = mapping && mapping.opposite_trigger ? mapping.opposite_trigger.number : null;
     renderActionsEditor(mapping ? mapping.actions || [] : [{ path: "", value: "midi_value" }]);
   }
 
   updateUndoVisibility();
   updateUndoTypeHint();
-  updateOppositePlaceholder();
   refreshChannelTriggerField();
   refreshOscTriggerFields();
 }
 
 function updateUndoTypeHint() {
-  const type = $("m-trigger-type").value;
   const hint = $("m-undo-type-hint");
-  if (hint) hint.textContent = type;
-  const oppositeHint = $("m-opposite-type-hint");
-  if (oppositeHint) oppositeHint.textContent = type;
+  if (hint) hint.textContent = $("m-trigger-type").value;
 }
 
-// Shown as a placeholder (not pre-filled - the field must stay empty by default,
-// since empty is what keeps a toggle action query-based/single-note) so the user
-// still gets the same "next free note" suggestion as everywhere else if they
-// decide to use it.
-function updateOppositePlaceholder() {
-  const input = $("m-opposite-number");
-  if (!input) return;
+// Tooltip for a toggle action's opposite-note field (see renderActionsEditor) - includes the
+// same "next free note" suggestion nextAvailableNumberAfter gives undo_trigger, just as a title
+// rather than a pre-filled value: the field must stay empty by default, since empty is what
+// keeps a toggle action query-based/single-note.
+function oppositeNoteHint() {
   const triggerType = $("m-trigger-type").value;
   const triggerResolved = resolveNoteInput($("m-osc-trigger-number").value);
   const base = triggerResolved ? triggerResolved.number : 59;
   const suggestion = nextAvailableNumberAfter(base, triggerType, editingIndex, "opposite_trigger");
-  input.placeholder = `optional – Vorschlag: ${suggestion} (${midiNumberToNoteName(suggestion)})`;
+  return (
+    "Optional: zweite Note, die garantiert toggle_off_value sendet (Haupt-Note oben sendet dann garantiert " +
+    "toggle_on_value) - ohne Pult-Abfrage. Leer lassen = echter Toggle mit einer Note (fragt den Pultzustand ab). " +
+    `Vorschlag für eine freie Note: ${suggestion} (${midiNumberToNoteName(suggestion)}).`
+  );
 }
 
 function closeEditor() {
   editingIndex = null;
-  $("mapping-editor-card").hidden = true;
+  $("mapping-editor-holder").appendChild($("mapping-editor-slot"));
   highlightEditingRow(null);
 }
 
@@ -788,7 +838,7 @@ async function saveMapping() {
       mapping.undo_trigger = { type: triggerType, number: undoResolved.number };
     }
 
-    const oppositeRaw = $("m-opposite-number").value.trim();
+    const oppositeRaw = collectOppositeTriggerNumberFromActions();
     if (oppositeRaw) {
       const oppositeResolved = resolveNoteInput(oppositeRaw);
       if (!oppositeResolved) {
@@ -814,8 +864,11 @@ async function saveMapping() {
   }
 
   if (await persistMappings(msg, "Gespeichert.")) {
-    renderMappingsList();
+    // closeEditor() first: it moves #mapping-editor-slot back out of #mappings-list, which
+    // renderMappingsList()'s list.innerHTML = "" would otherwise destroy (the slot is currently
+    // a child of the list while the editor is open - see openEditor/moveEditorSlotTo).
     closeEditor();
+    renderMappingsList();
   }
 }
 
@@ -825,8 +878,8 @@ async function deleteMapping() {
   if (!confirm("Dieses Mapping wirklich löschen?")) return;
   mappingsData.splice(editingIndex, 1);
   if (await persistMappings($("mapping-editor-message"), "Gelöscht.")) {
+    closeEditor(); // see saveMapping() - must happen before renderMappingsList()
     renderMappingsList();
-    closeEditor();
   }
 }
 
@@ -852,17 +905,12 @@ function initMappingsTab() {
   });
 
   $("m-trigger-number").addEventListener("input", refreshChannelTriggerField);
-  $("m-osc-trigger-number").addEventListener("input", () => {
-    updateOppositePlaceholder();
-    refreshOscTriggerFields();
-  });
+  $("m-osc-trigger-number").addEventListener("input", refreshOscTriggerFields);
   $("m-trigger-type").addEventListener("change", () => {
     updateUndoTypeHint();
-    updateOppositePlaceholder();
     refreshOscTriggerFields();
   });
   $("m-undo-number").addEventListener("input", refreshOscTriggerFields);
-  $("m-opposite-number").addEventListener("input", refreshOscTriggerFields);
 }
 
 // ---- Test panel ----

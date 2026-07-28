@@ -26,11 +26,14 @@ def bridge():
 
 @pytest.fixture
 def bridge_with_mappings():
-    """Same as `bridge`, but loaded with the project's real, shipped
-    midi_osc_mappings.json - useful for tests that want to exercise the
-    actual default mapping set (set_channel/add_channel/set_channel_class
-    plus the example OSC-action mappings)."""
-    mappings = main.load_json(main.MAPPINGS_FILE)
+    """Same as `bridge`, but loaded with the project's shipped example mappings
+    (midi_osc_mappings.example.json) - useful for tests that want to exercise the
+    actual default mapping set (set_channel/add_channel/set_channel_class plus
+    the example OSC-action mappings). Deliberately the tracked *example* file,
+    not the real (gitignored, per-installation) midi_osc_mappings.json - tests
+    must not depend on whatever a developer's own local file happens to contain,
+    and a fresh checkout may not even have one yet (see _bootstrap_from_example)."""
+    mappings = main.load_json(main.MAPPINGS_EXAMPLE_FILE)
     b = main.X32MidiBridge(config={}, mappings=mappings)
     sent = []
 

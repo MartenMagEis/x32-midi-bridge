@@ -219,6 +219,20 @@ input, select {
   transition: background-color 0.4s ease;
 }
 
+/* The editor lives in this <li> so it can be moved (via JS, see openEditor/closeEditor) right
+   after whichever mapping row it's editing - "parked" here (hidden) the rest of the time, so a
+   list rebuild (renderMappingsList) never touches it while it's actually in use. */
+.mapping-editor-holder {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+#mapping-editor-slot {
+  list-style: none;
+  padding: 0.75rem 0 0.25rem;
+}
+
 .mapping-item:last-child {
   border-bottom: none;
 }
@@ -307,6 +321,7 @@ h4 {
   gap: 0.5rem;
   align-items: center;
   margin-bottom: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .action-row .action-path {
@@ -334,6 +349,14 @@ h4 {
 .action-row .action-db-max-velocity,
 .action-row .action-db-max-db {
   width: 5rem;
+}
+
+.action-row .action-opposite-number {
+  width: 8rem;
+}
+
+.action-row .action-opposite-resolved {
+  padding-bottom: 0;
 }
 
 button.danger {

@@ -52,8 +52,8 @@ def test_validate_config_accepts_float_discovery_interval():
 
 # ---- _validate_mappings ----
 
-def test_validate_mappings_accepts_the_real_shipped_mappings():
-    mappings = main.load_json(main.MAPPINGS_FILE)
+def test_validate_mappings_accepts_the_shipped_example_mappings():
+    mappings = main.load_json(main.MAPPINGS_EXAMPLE_FILE)
     assert webui._validate_mappings(mappings) == []
 
 
