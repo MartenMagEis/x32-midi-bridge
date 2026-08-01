@@ -48,6 +48,9 @@ async function refreshStatus() {
     $("s-x32-port").textContent = status.x32_port;
     $("s-x32-connected").textContent = status.x32_connected ? "Verbunden" : "Nicht erreichbar (Reconnect läuft)";
     $("s-rtp-status").textContent = status.midi_input_status;
+    $("s-rtp-advertised").textContent = status.rtp_advertised_name
+      ? `${status.rtp_advertised_name} (${status.rtp_advertised_host}:${status.rtp_advertised_port})`
+      : "(nicht aktiv - midi_source ist nicht \"rtp\", oder Werbung ist noch nicht gestartet)";
     $("s-active-class").textContent = status.active_class;
     $("s-active-channels").textContent = JSON.stringify(status.class_selections, null, 2);
     $("s-peers").textContent = status.rtp_connected_peers.length ? status.rtp_connected_peers.join(", ") : "(keine)";
@@ -140,7 +143,6 @@ async function loadConfig() {
   $("cfg-rtp-session-name").value = config.rtp_session_name;
   $("cfg-rtp-local-port").value = config.rtp_local_port;
   setAutoToggle("cfg-rtp-host-auto", "cfg-rtp-host-ip-row", "cfg-rtp-host-ip", config.rtp_host_ip);
-  $("cfg-web-enabled").checked = !!config.web_enabled;
   $("cfg-web-host").value = config.web_host;
   $("cfg-web-port").value = config.web_port;
   $("cfg-double-send").checked = !!config.double_send;
@@ -160,7 +162,6 @@ async function saveConfig() {
     rtp_session_name: $("cfg-rtp-session-name").value.trim(),
     rtp_local_port: parseInt($("cfg-rtp-local-port").value, 10),
     rtp_host_ip: readAutoToggle("cfg-rtp-host-auto", "cfg-rtp-host-ip"),
-    web_enabled: $("cfg-web-enabled").checked,
     web_host: $("cfg-web-host").value.trim(),
     web_port: parseInt($("cfg-web-port").value, 10),
     double_send: $("cfg-double-send").checked,

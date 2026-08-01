@@ -21,6 +21,7 @@
         <tr><th>X32 Port</th><td id="s-x32-port">-</td></tr>
         <tr><th>X32-Verbindung</th><td id="s-x32-connected">-</td></tr>
         <tr><th>MIDI-Eingang</th><td id="s-rtp-status">-</td></tr>
+        <tr><th>RTP-MIDI wirbt als</th><td id="s-rtp-advertised">-</td></tr>
         <tr><th>Aktive Klasse</th><td id="s-active-class">-</td></tr>
         <tr><th>Verbundene Peers</th><td id="s-peers">-</td></tr>
         <tr><th>Web-Port</th><td id="s-web-port">-</td></tr>
@@ -84,11 +85,7 @@
       </div>
 
       <h3>Web-Oberfläche</h3>
-      <label class="checkbox-row">
-        <input id="cfg-web-enabled" type="checkbox" disabled>
-        Web-Oberfläche aktiv
-      </label>
-      <p class="hint">Lässt sich absichtlich nicht von hier aus deaktivieren — sonst gäbe es nach dem nächsten Neustart keinen Weg mehr zurück in die Oberfläche. Zum Deaktivieren <code>"web_enabled": false</code> direkt in <code>system_config.json</code> setzen.</p>
+      <p class="hint">Diese Weboberfläche selbst - Bind-Host und Port betreffen nur sie, nicht das X32 oder MIDI. Lässt sich nicht von hier aus deaktivieren (sonst gäbe es nach dem nächsten Neustart keinen Weg mehr zurück) - dafür <code>"web_enabled": false</code> direkt in <code>system_config.json</code> setzen.</p>
       <div class="form-row">
         <label>Bind-Host ⚠
           <input id="cfg-web-host" type="text">
@@ -97,6 +94,7 @@
           <input id="cfg-web-port" type="number" min="1" max="65535">
         </label>
       </div>
+      <p class="hint">Bind-Host: welche Netzwerkschnittstelle(n) diese Weboberfläche annimmt - <code>0.0.0.0</code> für alle, oder eine bestimmte IP zum Einschränken. Port: unter welchem Port diese Weboberfläche erreichbar ist (Standard 8090).</p>
 
       <h3>Verhalten</h3>
       <label class="checkbox-row">

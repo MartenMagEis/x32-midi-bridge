@@ -2,6 +2,7 @@ import asyncio
 import copy
 import json
 import logging
+import socket
 import time
 from collections import deque
 from pathlib import Path
@@ -193,6 +194,21 @@ async def _handle_style_css(request: web.Request) -> web.Response:
 
 async def _handle_status(request: web.Request) -> web.Response:
     bridge = request.app["bridge"]
+    # Advertised RTP-MIDI (AppleMIDI/zeroconf) identity, if currently running - this is what
+    # this bridge announces itself as on the network, so the user can check it against what
+    # actually shows up as a discoverable session on the connecting device (e.g. a DAW's
+    # "network MIDI" picker). None of these are meaningful when midi_source isn't "rtp", or
+    # before advertise_rtp_midi() has run once at startup.
+    service_info = getattr(bridge, "service_info", None)
+    rtp_advertised_name = service_info.name if service_info else None
+    rtp_advertised_host = None
+    if service_info and service_info.addresses:
+        try:
+            rtp_advertised_host = socket.inet_ntoa(service_info.addresses[0])
+        except (OSError, TypeError):
+            rtp_advertised_host = None
+    rtp_advertised_port = service_info.port if service_info else None
+
     return web.json_response({
         "x32_ip": bridge.x32_ip,
         "x32_port": bridge.x32_port,
@@ -204,6 +220,9 @@ async def _handle_status(request: web.Request) -> web.Response:
         "class_selections": bridge.class_selections,
         "undo_cache": bridge.undo_cache,
         "rtp_connected_peers": sorted(bridge.rtp_connected_peers.keys()),
+        "rtp_advertised_name": rtp_advertised_name,
+        "rtp_advertised_host": rtp_advertised_host,
+        "rtp_advertised_port": rtp_advertised_port,
         "web_port": bridge.config.get("web_port", 8090),
     })
 
