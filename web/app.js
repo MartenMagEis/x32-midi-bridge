@@ -192,8 +192,58 @@ async function saveConfig() {
       text += " (Hinweis: web_enabled lässt sich nicht über die Web-Oberfläche ändern und wurde unverändert gelassen.)";
     }
     showMessage(msg, text, false);
+
+    const midiKeys = result.midi_input_restart_required_for || [];
+    if (midiKeys.length) {
+      const proceed = confirm(
+        "MIDI-Eingang-Einstellung(en) geändert (" + midiKeys.join(", ") + "). " +
+        "Jetzt den MIDI-Eingang neu starten, um sie zu übernehmen? " +
+        "Kurze Unterbrechung der MIDI-Verbindung, die Weboberfläche bleibt die ganze Zeit erreichbar."
+      );
+      if (proceed) {
+        await restartMidiInput();
+      }
+    }
   } catch (e) {
     showMessage(msg, e.message, true);
+  }
+}
+
+async function restartMidiInput() {
+  const msg = $("config-message");
+  try {
+    const result = await fetchJson("/api/midi-input/restart", { method: "POST" });
+    showMessage(msg, "MIDI-Eingang neu gestartet - Status: " + result.midi_input_status, false);
+    refreshStatus();
+  } catch (e) {
+    showMessage(msg, "MIDI-Eingang-Neustart fehlgeschlagen: " + e.message, true);
+  }
+}
+
+async function scanRtpMidiNetwork() {
+  const btn = $("cfg-rtp-scan-btn");
+  const resultsEl = $("cfg-rtp-scan-results");
+  btn.disabled = true;
+  resultsEl.textContent = "Scanne (ein paar Sekunden)...";
+  try {
+    const result = await fetchJson("/api/midi-input/scan", { method: "POST" });
+    const sessions = result.sessions || [];
+    if (!sessions.length) {
+      resultsEl.textContent = "Keine anderen RTP-MIDI-Sitzungen im Netzwerk gefunden.";
+    } else {
+      resultsEl.innerHTML = "";
+      const list = document.createElement("ul");
+      for (const s of sessions) {
+        const li = document.createElement("li");
+        li.textContent = s.name + " (" + (s.host || "?") + ":" + (s.port || "?") + ")";
+        list.appendChild(li);
+      }
+      resultsEl.appendChild(list);
+    }
+  } catch (e) {
+    resultsEl.textContent = "Scan fehlgeschlagen: " + e.message;
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -209,6 +259,7 @@ function initConfigTab() {
     $("cfg-rtp-settings").hidden = $("cfg-midi-source").value !== "rtp";
   });
   $("cfg-midi-refresh-devices").addEventListener("click", () => loadMidiSourceOptions($("cfg-midi-source").value));
+  $("cfg-rtp-scan-btn").addEventListener("click", scanRtpMidiNetwork);
 }
 
 // ---- Note name <-> MIDI number conversion (client-side; mirrors main.py's

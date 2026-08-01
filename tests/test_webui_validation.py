@@ -162,6 +162,30 @@ def test_put_config_cannot_disable_web_enabled(tmp_path):
 
 
 def test_put_config_reports_restart_required_keys(tmp_path):
+    bridge = _FakeBridge({"web_enabled": True, "web_port": 8090, "log_level": "INFO"})
+    config_path = tmp_path / "system_config.json"
+
+    async def scenario():
+        with patch.object(main, "CONFIG_FILE", config_path):
+            app = _build_app(bridge)
+            async with TestClient(TestServer(app)) as client:
+                resp = await client.put(
+                    "/api/config",
+                    json={"web_enabled": True, "web_port": 9090, "log_level": "DEBUG"},
+                )
+                assert resp.status == 200
+                body = await resp.json()
+                assert body["restart_required_for"] == ["web_port"]
+                assert bridge.config["web_port"] == 9090
+                assert bridge.config["log_level"] == "DEBUG"
+
+    asyncio.run(scenario())
+
+
+def test_put_config_reports_midi_input_restart_required_keys(tmp_path):
+    # rtp_local_port (and midi_source/rtp_host_ip/rtp_session_name) no longer need a full
+    # bridge restart - see X32MidiBridge.restart_midi_input() - but the web UI still needs to
+    # know they changed so it can offer the lightweight MIDI-input-restart action.
     bridge = _FakeBridge({"web_enabled": True, "rtp_local_port": 5004, "log_level": "INFO"})
     config_path = tmp_path / "system_config.json"
 
@@ -175,9 +199,9 @@ def test_put_config_reports_restart_required_keys(tmp_path):
                 )
                 assert resp.status == 200
                 body = await resp.json()
-                assert body["restart_required_for"] == ["rtp_local_port"]
+                assert body["restart_required_for"] == []
+                assert body["midi_input_restart_required_for"] == ["rtp_local_port"]
                 assert bridge.config["rtp_local_port"] == 5005
-                assert bridge.config["log_level"] == "DEBUG"
 
     asyncio.run(scenario())
 
@@ -190,5 +214,69 @@ def test_put_config_rejects_invalid_body():
         async with TestClient(TestServer(app)) as client:
             resp = await client.put("/api/config", json={"x32_port": "nope"})
             assert resp.status == 400
+
+    asyncio.run(scenario())
+
+
+# ---- POST /api/midi-input/restart ----
+
+class _FakeBridgeWithMidiInputControl(_FakeBridge):
+    def __init__(self, config, restart_should_fail=False):
+        super().__init__(config)
+        self.restart_called = False
+        self._restart_should_fail = restart_should_fail
+
+    async def restart_midi_input(self):
+        self.restart_called = True
+        if self._restart_should_fail:
+            raise RuntimeError("boom")
+
+    def get_midi_input_status(self):
+        return "RTP-MIDI server listening; no peers connected"
+
+    async def scan_rtp_midi_network(self, duration_s=4.0):
+        return [{"name": "Other Session", "host": "192.168.1.5", "port": 5004}]
+
+
+def test_restart_midi_input_endpoint_calls_bridge_and_reports_status():
+    bridge = _FakeBridgeWithMidiInputControl({"midi_source": "rtp"})
+
+    async def scenario():
+        app = _build_app(bridge)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post("/api/midi-input/restart")
+            assert resp.status == 200
+            body = await resp.json()
+            assert body["ok"] is True
+            assert "RTP-MIDI" in body["midi_input_status"]
+            assert bridge.restart_called is True
+
+    asyncio.run(scenario())
+
+
+def test_restart_midi_input_endpoint_reports_failure_as_500():
+    bridge = _FakeBridgeWithMidiInputControl({"midi_source": "rtp"}, restart_should_fail=True)
+
+    async def scenario():
+        app = _build_app(bridge)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post("/api/midi-input/restart")
+            assert resp.status == 500
+
+    asyncio.run(scenario())
+
+
+# ---- POST /api/midi-input/scan ----
+
+def test_scan_rtp_midi_endpoint_returns_discovered_sessions():
+    bridge = _FakeBridgeWithMidiInputControl({"midi_source": "rtp"})
+
+    async def scenario():
+        app = _build_app(bridge)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post("/api/midi-input/scan")
+            assert resp.status == 200
+            body = await resp.json()
+            assert body["sessions"] == [{"name": "Other Session", "host": "192.168.1.5", "port": 5004}]
 
     asyncio.run(scenario())

@@ -36,7 +36,7 @@
   <section id="tab-config" class="tab-panel">
     <div class="card">
       <h2>Konfiguration</h2>
-      <p class="hint">Felder mit ⚠ erfordern einen Neustart der Bridge, um wirksam zu werden.</p>
+      <p class="hint">Felder mit ⚠ erfordern einen Neustart der ganzen Bridge, um wirksam zu werden. Felder mit ↻ brauchen nur einen kurzen Neustart des MIDI-Eingangs (nach dem Speichern wird gefragt, ob das gleich passieren soll) - die Weboberfläche bleibt währenddessen erreichbar.</p>
 
       <h3>X32-Verbindung</h3>
       <label class="checkbox-row">
@@ -56,7 +56,7 @@
 
       <h3>MIDI-Eingang</h3>
       <div class="form-row">
-        <label>Quelle ⚠
+        <label>Quelle ↻
           <select id="cfg-midi-source"></select>
         </label>
         <button id="cfg-midi-refresh-devices" type="button">Geräte aktualisieren</button>
@@ -66,10 +66,10 @@
       <div id="cfg-rtp-settings">
         <h3>RTP-MIDI</h3>
         <div class="form-row">
-          <label>Session-Name ⚠
+          <label>Session-Name ↻
             <input id="cfg-rtp-session-name" type="text">
           </label>
-          <label>Control-Port ⚠
+          <label>Control-Port ↻
             <input id="cfg-rtp-local-port" type="number" min="1" max="65535">
           </label>
         </div>
@@ -78,10 +78,15 @@
           Bind-IP automatisch ermitteln
         </label>
         <div class="form-row" id="cfg-rtp-host-ip-row">
-          <label>Feste Bind-IP ⚠
+          <label>Feste Bind-IP ↻
             <input id="cfg-rtp-host-ip" type="text" placeholder="z. B. 192.168.1.20">
           </label>
         </div>
+        <div class="form-row">
+          <button id="cfg-rtp-scan-btn" type="button">Netzwerk nach RTP-MIDI-Sitzungen scannen</button>
+        </div>
+        <p class="hint">Sucht ein paar Sekunden lang nach <em>anderen</em> im Netzwerk beworbenen RTP-MIDI-Sitzungen (z. B. einer DAW) - läuft nur bei Klick, nicht dauerhaft im Hintergrund. Zeigt nicht die eigene Sitzung dieser Bridge (siehe "RTP-MIDI wirbt als" im Status-Tab).</p>
+        <div id="cfg-rtp-scan-results" class="code-block">-</div>
       </div>
 
       <h3>Web-Oberfläche</h3>

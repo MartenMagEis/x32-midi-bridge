@@ -15,14 +15,21 @@ logger = logging.getLogger("x32-midi-bridge")
 WEB_DIR = Path(__file__).parent / "web"
 
 _RESTART_REQUIRED_KEYS = {
-    "rtp_local_port",
-    "rtp_host_ip",
-    "rtp_session_name",
     "web_host",
     "web_port",
     "web_enabled",
     "x32_port",
+}
+# Changing these no longer needs a full bridge restart - X32MidiBridge.restart_midi_input()
+# tears down and rebuilds just the MIDI-input subsystem (RTP-MIDI server + zeroconf
+# advertisement, or a local device listener) from the current config. The web UI still flags
+# them (see midi_input_restart_required_for below) so the change is visibly not live yet, but
+# the fix is a lightweight "MIDI-Eingang neu starten" action, not "restart the whole tool".
+_MIDI_INPUT_RESTART_KEYS = {
     "midi_source",
+    "rtp_local_port",
+    "rtp_host_ip",
+    "rtp_session_name",
 }
 _VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 _CONFIG_SCHEMA = {
@@ -272,6 +279,9 @@ async def _handle_put_config(request: web.Request) -> web.Response:
     changed_restart_keys = sorted(
         key for key in _RESTART_REQUIRED_KEYS if bridge.config.get(key) != new_config.get(key)
     )
+    changed_midi_input_keys = sorted(
+        key for key in _MIDI_INPUT_RESTART_KEYS if bridge.config.get(key) != new_config.get(key)
+    )
 
     CONFIG_FILE.write_text(json.dumps(new_config, indent=2) + "\n", encoding="utf-8")
     bridge.config.clear()
@@ -281,10 +291,42 @@ async def _handle_put_config(request: web.Request) -> web.Response:
         if level is not None:
             logging.getLogger().setLevel(level)
 
-    response: Dict[str, Any] = {"ok": True, "restart_required_for": changed_restart_keys}
+    response: Dict[str, Any] = {
+        "ok": True,
+        "restart_required_for": changed_restart_keys,
+        "midi_input_restart_required_for": changed_midi_input_keys,
+    }
     if web_enabled_locked:
         response["web_enabled_locked"] = True
     return web.json_response(response)
+
+
+async def _handle_restart_midi_input(request: web.Request) -> web.Response:
+    """Tears down and rebuilds just the MIDI-input subsystem from the config already on disk
+    (see _handle_put_config, which the web UI calls first to persist midi_source/rtp_* changes)
+    - the web UI, X32 connection, and mappings are untouched, no full bridge restart."""
+    bridge = request.app["bridge"]
+    try:
+        await bridge.restart_midi_input()
+    except Exception:
+        logger.exception("Failed to restart MIDI input")
+        return web.json_response(
+            {"error": "MIDI-Eingang konnte nicht neu gestartet werden - siehe Log"}, status=500
+        )
+    return web.json_response({"ok": True, "midi_input_status": bridge.get_midi_input_status()})
+
+
+async def _handle_scan_rtp_midi(request: web.Request) -> web.Response:
+    """One-shot, on-demand network scan for other RTP-MIDI sessions - see
+    X32MidiBridge.scan_rtp_midi_network for what "on demand" means (nothing runs continuously
+    in the background, only while this request is in flight)."""
+    bridge = request.app["bridge"]
+    try:
+        results = await bridge.scan_rtp_midi_network()
+    except Exception:
+        logger.exception("RTP-MIDI network scan failed")
+        return web.json_response({"error": "Scan fehlgeschlagen - siehe Log"}, status=500)
+    return web.json_response({"sessions": results})
 
 
 async def _handle_get_mappings(request: web.Request) -> web.Response:
@@ -460,6 +502,8 @@ def _add_routes(app: web.Application) -> None:
     app.router.add_get("/api/config", _handle_get_config)
     app.router.add_get("/api/midi/devices", _handle_midi_devices)
     app.router.add_put("/api/config", _handle_put_config)
+    app.router.add_post("/api/midi-input/restart", _handle_restart_midi_input)
+    app.router.add_post("/api/midi-input/scan", _handle_scan_rtp_midi)
     app.router.add_get("/api/mappings", _handle_get_mappings)
     app.router.add_put("/api/mappings", _handle_put_mappings)
     app.router.add_post("/api/validate-note", _handle_validate_note)

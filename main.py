@@ -18,7 +18,7 @@ from pythonosc.udp_client import SimpleUDPClient
 from pythonosc.osc_message import OscMessage
 from pythonosc.osc_message_builder import OscMessageBuilder
 from pymidi.server import Handler as PymidiHandler, Server as PymidiServer
-from zeroconf import ServiceInfo, Zeroconf
+from zeroconf import ServiceBrowser, ServiceInfo, ServiceListener, Zeroconf
 import rtmidi
 
 # The real, live config/mappings files are gitignored on purpose (see .gitignore) - they hold a
@@ -335,6 +335,79 @@ class X32MidiBridge:
             self._start_rtp_server()
         else:
             self._start_local_midi(midi_source)
+
+    async def stop_midi_input(self) -> None:
+        """Tears down whichever MIDI input is currently active - the counterpart to
+        start_midi_input(), used to switch midi_source (or the RTP session settings) at
+        runtime (see restart_midi_input) without touching the web server, X32 connection, or
+        anything else. Safe to call even if no input is currently running."""
+        if self.local_midi_listener is not None:
+            self.local_midi_listener.stop()
+            self.local_midi_listener = None
+
+        if self.service_info is not None:
+            try:
+                self.zeroconf.unregister_service(self.service_info)
+            except Exception:
+                logger.exception("Failed to unregister RTP-MIDI zeroconf service while switching input")
+            self.service_info = None
+
+        if self.rtp_server is not None:
+            # pymidi's Server.serve_forever() (see the vendored source) is a hardcoded
+            # `while True: self._loop_once()` with an unbounded select.select() and no public
+            # stop hook at all - closing its sockets out from under that blocked select() call
+            # is the only way to unwind the thread. On Linux this reliably makes select() raise
+            # (typically EBADF), which _run_rtp_server()'s existing except clauses already
+            # catch and log - the thread then exits on its own, no monkey-patching needed.
+            for protos_attr in ("ipv4_protocols", "ipv6_protocols"):
+                protos = getattr(self.rtp_server, protos_attr, None)
+                if not protos:
+                    continue
+                for proto in protos:
+                    try:
+                        proto.socket.close()
+                    except Exception:
+                        pass
+            if self.rtp_server_thread is not None:
+                loop = asyncio.get_running_loop()
+                # join() blocks - run off the event loop so switching MIDI input can never
+                # freeze the web UI/other bridge activity, even in the worst case below.
+                await loop.run_in_executor(None, self.rtp_server_thread.join, 2.0)
+                if self.rtp_server_thread.is_alive():
+                    logger.warning(
+                        "RTP-MIDI server thread did not stop within 2s - leaving it as an "
+                        "abandoned daemon thread (same fallback already used on full shutdown)"
+                    )
+            self.rtp_server = None
+            self.rtp_server_thread = None
+            self.rtp_handler = None
+            self.rtp_connected_peers.clear()
+
+    async def restart_midi_input(self) -> None:
+        """Stops whatever MIDI input is active and starts fresh from the current config
+        (midi_source, and if RTP, rtp_session_name/rtp_host_ip/rtp_local_port) - lets those be
+        changed at runtime via the web UI instead of requiring a full bridge restart. Persist
+        the new values to config *before* calling this (see the web UI's config-save flow) so
+        start_midi_input() picks them up."""
+        logger.info("Restarting MIDI input (source: %s)", self.config.get("midi_source", "rtp"))
+        await self.stop_midi_input()
+        await self.start_midi_input()
+
+    async def scan_rtp_midi_network(self, duration_s: float = 4.0) -> List[Dict[str, Any]]:
+        """One-shot, on-demand scan (triggered by a button in the web UI, not run continuously
+        in the background) for *other* RTP-MIDI (AppleMIDI) sessions advertised on the local
+        network - e.g. a DAW's own "network MIDI" session, or another instance of this bridge -
+        distinct from advertise_rtp_midi() which only registers this bridge's own session.
+        Reuses the bridge's existing Zeroconf instance; safe to call regardless of the current
+        midi_source (browsing the network doesn't require this bridge's own RTP server to be
+        running)."""
+        listener = _RtpMidiScanListener(self.zeroconf)
+        browser = ServiceBrowser(self.zeroconf, "_apple-midi._udp.local.", listener=listener)
+        try:
+            await asyncio.sleep(duration_s)
+        finally:
+            browser.cancel()
+        return sorted(listener.found.values(), key=lambda s: s["name"])
 
     def _start_local_midi(self, device_name: str) -> None:
         loop = asyncio.get_running_loop()
@@ -957,6 +1030,34 @@ class X32MidiBridge:
         logger.info("CLI test mode activated")
         while self.running:
             await asyncio.sleep(1)
+
+
+class _RtpMidiScanListener(ServiceListener):
+    """Collects other RTP-MIDI (AppleMIDI) sessions advertised on the network via zeroconf -
+    separate from this bridge's own advertise_rtp_midi(), which only registers *this* bridge's
+    own session. Used for a one-shot on-demand scan (see X32MidiBridge.scan_rtp_midi_network),
+    not continuous background discovery."""
+
+    def __init__(self, zc: Zeroconf):
+        self.zc = zc
+        self.found: Dict[str, Dict[str, Any]] = {}
+
+    def add_service(self, zc: Zeroconf, service_type: str, name: str) -> None:
+        info = zc.get_service_info(service_type, name, timeout=2000)
+        if info is None:
+            return
+        addresses = info.parsed_addresses() if hasattr(info, "parsed_addresses") else []
+        self.found[name] = {
+            "name": name,
+            "host": addresses[0] if addresses else None,
+            "port": info.port,
+        }
+
+    def update_service(self, zc: Zeroconf, service_type: str, name: str) -> None:
+        self.add_service(zc, service_type, name)
+
+    def remove_service(self, zc: Zeroconf, service_type: str, name: str) -> None:
+        self.found.pop(name, None)
 
 
 class _BridgeMidiHandler(PymidiHandler):
