@@ -187,6 +187,10 @@ class X32MidiBridge:
         self.rtp_server: Optional[PymidiServer] = None
         self.rtp_server_thread: Optional[threading.Thread] = None
         self.rtp_handler: Optional["_BridgeMidiHandler"] = None
+        # See stop_midi_input()/_RtpMidiStopSentinel - lets the RTP server thread's blocking
+        # select() loop be woken up and unwound from another thread on demand.
+        self._rtp_wake_recv: Optional[socket.socket] = None
+        self._rtp_wake_send: Optional[socket.socket] = None
         self.rtp_connected_peers: Dict[str, Any] = {}
         self.local_midi_listener: Optional["_LocalMidiListener"] = None
         self.service_info: Optional[ServiceInfo] = None
@@ -353,12 +357,36 @@ class X32MidiBridge:
             self.service_info = None
 
         if self.rtp_server is not None:
-            # pymidi's Server.serve_forever() (see the vendored source) is a hardcoded
-            # `while True: self._loop_once()` with an unbounded select.select() and no public
-            # stop hook at all - closing its sockets out from under that blocked select() call
-            # is the only way to unwind the thread. On Linux this reliably makes select() raise
-            # (typically EBADF), which _run_rtp_server()'s existing except clauses already
-            # catch and log - the thread then exits on its own, no monkey-patching needed.
+            # See _StopServeForever/_RtpMidiStopSentinel's docstrings for the full reasoning -
+            # in short: pymidi's Server.serve_forever() has no public stop hook at all
+            # (hardcoded `while True: self._loop_once()`, unbounded select.select()), and
+            # closing its sockets out from under that blocked select() call - the first
+            # approach tried here - turned out to NOT reliably unblock it on real Linux
+            # hardware (confirmed the hard way: the thread stayed alive past the join timeout
+            # and the next bind attempt then failed with EADDRINUSE). Writing to the wake
+            # socket instead exploits the exact same "a watched socket became readable"
+            # mechanism the loop already correctly reacts to for real MIDI traffic.
+            if self._rtp_wake_send is not None:
+                try:
+                    self._rtp_wake_send.send(b"\x00")
+                except Exception:
+                    logger.exception("Failed to signal RTP-MIDI server thread to stop")
+
+            if self.rtp_server_thread is not None:
+                loop = asyncio.get_running_loop()
+                # join() blocks - run off the event loop so switching MIDI input can never
+                # freeze the web UI/other bridge activity, even in the worst case below.
+                await loop.run_in_executor(None, self.rtp_server_thread.join, 2.0)
+                if self.rtp_server_thread.is_alive():
+                    logger.warning(
+                        "RTP-MIDI server thread did not stop within 2s - leaving it as an "
+                        "abandoned daemon thread (same fallback already used on full shutdown) "
+                        "- its ports will very likely still be bound, so restarting RTP-MIDI "
+                        "input right now may fail with 'address already in use'"
+                    )
+
+            # Only safe to close the real sockets once the thread has actually stopped (it's
+            # no longer selecting on them at this point) - releases the ports for a rebind.
             for protos_attr in ("ipv4_protocols", "ipv6_protocols"):
                 protos = getattr(self.rtp_server, protos_attr, None)
                 if not protos:
@@ -368,16 +396,15 @@ class X32MidiBridge:
                         proto.socket.close()
                     except Exception:
                         pass
-            if self.rtp_server_thread is not None:
-                loop = asyncio.get_running_loop()
-                # join() blocks - run off the event loop so switching MIDI input can never
-                # freeze the web UI/other bridge activity, even in the worst case below.
-                await loop.run_in_executor(None, self.rtp_server_thread.join, 2.0)
-                if self.rtp_server_thread.is_alive():
-                    logger.warning(
-                        "RTP-MIDI server thread did not stop within 2s - leaving it as an "
-                        "abandoned daemon thread (same fallback already used on full shutdown)"
-                    )
+            for wake_sock in (self._rtp_wake_recv, self._rtp_wake_send):
+                if wake_sock is not None:
+                    try:
+                        wake_sock.close()
+                    except Exception:
+                        pass
+            self._rtp_wake_recv = None
+            self._rtp_wake_send = None
+
             self.rtp_server = None
             self.rtp_server_thread = None
             self.rtp_handler = None
@@ -600,6 +627,11 @@ class X32MidiBridge:
             self.rtp_handler = _BridgeMidiHandler(self, asyncio.get_running_loop())
             self.rtp_server = PymidiServer([("0.0.0.0", control_port)])
             self.rtp_server.add_handler(self.rtp_handler)
+            # See _StopServeForever/_RtpMidiStopSentinel's docstrings - this pair is how
+            # stop_midi_input() unblocks the server thread's otherwise-permanent select() loop.
+            # Created here (not lazily) so it always exists together with the server/thread it
+            # belongs to.
+            self._rtp_wake_recv, self._rtp_wake_send = socket.socketpair()
             self.rtp_server_thread = threading.Thread(
                 target=self._run_rtp_server, name="pymidi-server", daemon=True,
             )
@@ -613,7 +645,17 @@ class X32MidiBridge:
 
     def _run_rtp_server(self) -> None:
         try:
-            self.rtp_server.serve_forever()
+            # Reimplements serve_forever()'s 2-line body (_init_protocols() then a `while True:
+            # self._loop_once()` loop) instead of calling it directly, so the wake socket can be
+            # injected into socket_map right after the real ctrl/data sockets are bound but
+            # before the loop starts blocking in select() - serve_forever() itself offers no
+            # hook to do this from outside.
+            self.rtp_server._init_protocols()
+            self.rtp_server.socket_map[self._rtp_wake_recv] = _RtpMidiStopSentinel()
+            while True:
+                self.rtp_server._loop_once()
+        except _StopServeForever:
+            logger.debug("RTP-MIDI server thread stopped (wake signal)")
         except OSError as exc:
             control_port = self.config.get("rtp_local_port", 5004)
             if exc.errno == errno.EADDRINUSE:
@@ -1030,6 +1072,28 @@ class X32MidiBridge:
         logger.info("CLI test mode activated")
         while self.running:
             await asyncio.sleep(1)
+
+
+class _StopServeForever(Exception):
+    """Raised by _RtpMidiStopSentinel to unwind pymidi's Server.serve_forever() loop - see
+    the comment on the wake-socket mechanism in X32MidiBridge._start_rtp_server/stop_midi_input
+    for why this exists (closing the real sockets out from under a blocked select() call was
+    tried first and is NOT reliable - confirmed on real Linux hardware, not just in theory)."""
+
+
+class _RtpMidiStopSentinel:
+    """A fake pymidi protocol object, injected into the running Server's own socket_map (see
+    _start_rtp_server) alongside the real ctrl/data protocols. pymidi's _loop_once() treats any
+    readable socket in socket_map identically - it doesn't know or care that this one isn't a
+    real MIDI socket, it just calls handle_message() the same way it would for an actual MIDI
+    packet. That's exploited here deliberately: writing any byte to the paired wake socket from
+    stop_midi_input() makes this one "readable" too, _loop_once() calls handle_message() on it,
+    and this raises to unwind serve_forever()'s otherwise-permanent `while True` loop - the
+    exact same readiness mechanism the server already correctly reacts to for real traffic,
+    instead of a racy attempt to interrupt a blocked select() from outside."""
+
+    def handle_message(self, buffer: bytes, addr: Any) -> None:
+        raise _StopServeForever()
 
 
 class _RtpMidiScanListener(ServiceListener):

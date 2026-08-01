@@ -18,11 +18,17 @@ def _free_udp_port() -> int:
 
 
 # ---- stop_midi_input / restart_midi_input: RTP-MIDI ----
-# These exercise the real pymidi server + a real socket, not mocks - the whole point of this
-# feature is that pymidi's serve_forever() has no public stop hook (see the comment in
-# stop_midi_input), so what's actually being verified here is that closing the server's own
-# sockets really does unblock the blocked select() call and let the thread exit, on this
-# platform. That's the part most worth a real test, not just an interaction/mock test.
+# These exercise the real pymidi server + real sockets, not mocks - the whole point of this
+# feature is that pymidi's serve_forever() has no public stop hook (see _StopServeForever's
+# docstring), so what's actually being verified is that the wake-socket signal really does
+# unblock the server thread's select() loop and let it exit. Worth calling out: an earlier
+# version of this mechanism closed the server's own sockets instead, which passed this exact
+# test suite on this dev machine (Windows) but was then found NOT to reliably unblock select()
+# on real Linux hardware (the actual deployment target) - it left the thread alive past the
+# join timeout and the next bind attempt failed with "address already in use". That's exactly
+# why this is a real integration test and not a mock - and also why passing here is reassuring
+# but not by itself sufficient; this whole feature was only actually confirmed by testing on
+# the Pi directly.
 
 def test_stop_midi_input_terminates_the_rtp_server_thread(bridge):
     port = _free_udp_port()
