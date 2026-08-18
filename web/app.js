@@ -135,8 +135,10 @@ async function loadMidiSourceOptions(selectedValue) {
   $("cfg-rtp-settings").hidden = value !== "rtp";
 }
 
-async function loadConfig() {
-  const config = await fetchJson("/api/config");
+// Shared by loadConfig (fetched from the running bridge) and importConfig (read from a file
+// picked by the user) - either way, populates the form only. Nothing is written to disk until
+// the user reviews it and clicks "Speichern", same as any other form edit.
+async function applyConfigToForm(config) {
   setAutoToggle("cfg-x32-auto", "cfg-x32-ip-row", "cfg-x32-ip", config.x32_ip);
   $("cfg-x32-port").value = config.x32_port;
   await loadMidiSourceOptions(config.midi_source);
@@ -151,6 +153,28 @@ async function loadConfig() {
   $("cfg-verify-delay").value = config.verify_delay_ms;
   $("cfg-discovery-interval").value = config.discovery_interval_s;
   renderAllowedPeers(config.allowed_peers || []);
+}
+
+async function loadConfig() {
+  const config = await fetchJson("/api/config");
+  await applyConfigToForm(config);
+}
+
+async function importConfig(file) {
+  const msg = $("config-message");
+  let config;
+  try {
+    config = JSON.parse(await file.text());
+  } catch (e) {
+    showMessage(msg, "Datei ist kein gültiges JSON.", true);
+    return;
+  }
+  if (typeof config !== "object" || config === null || Array.isArray(config)) {
+    showMessage(msg, "Datei muss ein JSON-Objekt sein.", true);
+    return;
+  }
+  await applyConfigToForm(config);
+  showMessage(msg, 'Konfiguration aus Datei geladen - bitte prüfen und "Speichern" klicken, um sie zu übernehmen.', false);
 }
 
 async function saveConfig() {
@@ -400,6 +424,37 @@ function isFixedMapping(mapping) {
 
 async function loadMappingsList() {
   mappingsData = await fetchJson("/api/mappings");
+  await ensureFixedMappings();
+  renderMappingsList();
+}
+
+// Unlike importConfig (stages into the form, "Speichern" commits it), a mappings file has no
+// equivalent single-form staging area - it's replacing the whole list at once, so this asks for
+// confirmation up front (same pattern as deleteMapping's confirm()) and then persists straight
+// away through the existing, already-validated PUT /api/mappings path.
+async function importMappings(file) {
+  const msg = $("mappings-message");
+  let parsed;
+  try {
+    parsed = JSON.parse(await file.text());
+  } catch (e) {
+    showMessage(msg, "Datei ist kein gültiges JSON.", true);
+    return;
+  }
+  if (!Array.isArray(parsed)) {
+    showMessage(msg, "Datei muss ein JSON-Array von Mappings sein.", true);
+    return;
+  }
+  if (!confirm("Alle aktuellen Mappings (" + mappingsData.length + ") durch die " + parsed.length + " aus der Datei ersetzen?")) {
+    return;
+  }
+  const previous = mappingsData;
+  mappingsData = parsed;
+  const ok = await persistMappings(msg, "Mappings importiert.");
+  if (!ok) {
+    mappingsData = previous;
+    return;
+  }
   await ensureFixedMappings();
   renderMappingsList();
 }
@@ -940,6 +995,13 @@ function initMappingsTab() {
     highlightEditingRow(null);
     openEditor(null);
   });
+  $("mappings-export").addEventListener("click", () => { window.location.href = "/api/mappings/export"; });
+  $("mappings-import-btn").addEventListener("click", () => $("mappings-import-file").click());
+  $("mappings-import-file").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (file) importMappings(file);
+  });
   $("mapping-cancel").addEventListener("click", closeEditor);
   $("mapping-save").addEventListener("click", saveMapping);
   $("mapping-delete").addEventListener("click", deleteMapping);
@@ -1058,6 +1120,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
   $("config-reload").addEventListener("click", loadConfig);
   $("config-save").addEventListener("click", saveConfig);
+  $("config-export").addEventListener("click", () => { window.location.href = "/api/config/export"; });
+  $("config-import-btn").addEventListener("click", () => $("config-import-file").click());
+  $("config-import-file").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    e.target.value = ""; // allow re-picking the same file name later
+    if (file) importConfig(file);
+  });
   $("test-send").addEventListener("click", sendTestMidi);
   $("osc-query").addEventListener("click", queryOsc);
 

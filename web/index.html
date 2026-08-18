@@ -135,7 +135,11 @@
       <div class="actions">
         <button id="config-reload">Neu laden</button>
         <button id="config-save" class="primary">Speichern</button>
+        <button id="config-export" type="button">Exportieren</button>
+        <button id="config-import-btn" type="button">Importieren</button>
+        <input id="config-import-file" type="file" accept="application/json" hidden>
       </div>
+      <p class="hint">Export lädt die aktuell gespeicherte Konfiguration als Datei herunter. Import liest eine solche Datei ein und übernimmt sie ins Formular oben - erst "Speichern" schreibt sie tatsächlich fest.</p>
       <div id="config-message" class="message"></div>
     </div>
   </section>
@@ -144,7 +148,12 @@
     <div class="card">
       <div class="mappings-header">
         <h2>MIDI → OSC Mappings</h2>
-        <button id="mapping-add" class="primary">+ Neues Mapping</button>
+        <div class="actions" style="margin-top: 0;">
+          <button id="mapping-add" class="primary">+ Neues Mapping</button>
+          <button id="mappings-export" type="button">Exportieren</button>
+          <button id="mappings-import-btn" type="button">Importieren</button>
+          <input id="mappings-import-file" type="file" accept="application/json" hidden>
+        </div>
       </div>
       <ul id="mappings-list" class="mappings-list"></ul>
       <div id="mappings-message" class="message"></div>

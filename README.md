@@ -47,6 +47,9 @@ Für die Kommunikation müssen sich der Steuerungs-PC, der Daemon und das X32-Mi
 
 ### Erledigt
 
+- **Konfiguration und Mappings exportier-/importierbar** über die Web-Oberfläche (siehe
+  [Web-Oberfläche](docs/web-ui.md)) - Backup/Übertragung auf eine andere Bridge-Instanz, ohne
+  die JSON-Dateien manuell auf der Platte suchen zu müssen.
 - **x32-recorder-Integration:** läuft heute als `external_process`-Plugin über x32-recorders
   Plugin-System (GitHub-Import, Start/Stop/Logs über x32-recorders Settings-Seite) - einfacher als
   der ursprüngliche Plan in [docs/plugin-integration.md](docs/plugin-integration.md) (der einen

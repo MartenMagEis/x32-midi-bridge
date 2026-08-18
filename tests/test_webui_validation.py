@@ -1,4 +1,5 @@
 import asyncio
+import json
 from unittest.mock import patch
 
 from aiohttp import web
@@ -278,5 +279,45 @@ def test_scan_rtp_midi_endpoint_returns_discovered_sessions():
             assert resp.status == 200
             body = await resp.json()
             assert body["sessions"] == [{"name": "Other Session", "host": "192.168.1.5", "port": 5004}]
+
+    asyncio.run(scenario())
+
+
+# ---- GET /api/config/export, GET /api/mappings/export ----
+
+def test_export_config_downloads_the_live_config():
+    config = {"x32_ip": "auto", "x32_port": 10023, "web_enabled": True}
+    bridge = _FakeBridge(config)
+
+    async def scenario():
+        app = _build_app(bridge)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/config/export")
+            assert resp.status == 200
+            assert resp.headers["Content-Disposition"] == 'attachment; filename="system_config.json"'
+            assert resp.content_type == "application/json"
+            body = await resp.json()
+            assert body == config
+
+    asyncio.run(scenario())
+
+
+def test_export_mappings_downloads_the_file_on_disk(tmp_path):
+    # Deliberately reads MAPPINGS_FILE, not any in-memory bridge.mappings copy - see
+    # _handle_export_mappings's docstring for why (note names as typed, not normalized).
+    mappings_path = tmp_path / "midi_osc_mappings.json"
+    mappings = [{"name": "a", "trigger": {"type": "note_on", "number": "C4"}}]
+    mappings_path.write_text(json.dumps(mappings), encoding="utf-8")
+    bridge = _FakeBridge({})
+
+    async def scenario():
+        with patch.object(main, "MAPPINGS_FILE", mappings_path):
+            app = _build_app(bridge)
+            async with TestClient(TestServer(app)) as client:
+                resp = await client.get("/api/mappings/export")
+                assert resp.status == 200
+                assert resp.headers["Content-Disposition"] == 'attachment; filename="midi_osc_mappings.json"'
+                body = await resp.json()
+                assert body == mappings
 
     asyncio.run(scenario())

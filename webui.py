@@ -250,6 +250,21 @@ async def _handle_get_config(request: web.Request) -> web.Response:
     return web.json_response(bridge.config)
 
 
+async def _handle_export_config(request: web.Request) -> web.Response:
+    """Same data as _handle_get_config, just with a Content-Disposition header so a plain
+    browser navigation (window.location.href, see app.js) downloads it as a file instead of
+    rendering it - lets a user back up/transfer their setup between machines without needing to
+    manually copy system_config.json off the filesystem."""
+    bridge = request.app["bridge"]
+    body = json.dumps(bridge.config, indent=2) + "\n"
+    return web.Response(
+        body=body,
+        content_type="application/json",
+        charset="utf-8",
+        headers={"Content-Disposition": 'attachment; filename="system_config.json"'},
+    )
+
+
 async def _handle_put_config(request: web.Request) -> web.Response:
     from main import CONFIG_FILE
 
@@ -333,6 +348,21 @@ async def _handle_get_mappings(request: web.Request) -> web.Response:
     from main import MAPPINGS_FILE, load_json
 
     return web.json_response(load_json(MAPPINGS_FILE))
+
+
+async def _handle_export_mappings(request: web.Request) -> web.Response:
+    """Same data as _handle_get_mappings (the on-disk file, with note names exactly as typed -
+    not bridge.mappings, which is a normalized runtime copy), just downloadable - see
+    _handle_export_config's docstring for why."""
+    from main import MAPPINGS_FILE, load_json
+
+    body = json.dumps(load_json(MAPPINGS_FILE), indent=2) + "\n"
+    return web.Response(
+        body=body,
+        content_type="application/json",
+        charset="utf-8",
+        headers={"Content-Disposition": 'attachment; filename="midi_osc_mappings.json"'},
+    )
 
 
 async def _handle_put_mappings(request: web.Request) -> web.Response:
@@ -500,11 +530,13 @@ def _add_routes(app: web.Application) -> None:
     app.router.add_get("/style.css", _handle_style_css)
     app.router.add_get("/api/status", _handle_status)
     app.router.add_get("/api/config", _handle_get_config)
+    app.router.add_get("/api/config/export", _handle_export_config)
     app.router.add_get("/api/midi/devices", _handle_midi_devices)
     app.router.add_put("/api/config", _handle_put_config)
     app.router.add_post("/api/midi-input/restart", _handle_restart_midi_input)
     app.router.add_post("/api/midi-input/scan", _handle_scan_rtp_midi)
     app.router.add_get("/api/mappings", _handle_get_mappings)
+    app.router.add_get("/api/mappings/export", _handle_export_mappings)
     app.router.add_put("/api/mappings", _handle_put_mappings)
     app.router.add_post("/api/validate-note", _handle_validate_note)
     app.router.add_post("/api/test/midi", _handle_test_midi)
