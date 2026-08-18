@@ -143,6 +143,46 @@ main {
   gap: 0.5rem;
 }
 
+/* Config-Tab-eigene Aktionsleiste (Neu laden/Speichern/Exportieren/Importieren) - fixiert am
+   unteren Bildschirmrand statt im normalen Formularfluss, damit sie (a) visuell klar vom Inhalt
+   darüber abgesetzt ist, statt wie ein Teil des letzten Abschnitts ("Erlaubte Peers") zu wirken,
+   und (b) bei einem langen Formular immer erreichbar bleibt, ohne erst nach unten scrollen zu
+   müssen. #tab-config.active bekommt dafür unten zusätzlichen Formular-Platz (siehe .tab-panel),
+   damit die letzten Felder nicht dauerhaft hinter der Leiste verschwinden. */
+.config-actions-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: white;
+  border-top: 1px solid #e2e8f0;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.08);
+  padding: 0.75rem 1.5rem;
+  z-index: 10;
+}
+
+.config-actions-bar-inner {
+  max-width: 900px;
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.config-actions-bar-inner .message {
+  margin: 0;
+  flex-basis: 100%;
+}
+
+#tab-config.active {
+  /* Generous, not tightly tuned to the bar's exact height - it can grow (e.g. the message
+     wrapping onto its own line, see .config-actions-bar-inner .message), and a little extra
+     empty space at the end of the form costs nothing, unlike real content hiding behind the
+     fixed bar. */
+  padding-bottom: 6rem;
+}
+
 button {
   border: 1px solid #e2e8f0;
   background: white;

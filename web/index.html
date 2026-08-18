@@ -132,15 +132,25 @@
       <div id="cfg-allowed-peers-list"></div>
       <button id="cfg-allowed-peers-add" type="button">+ Eintrag hinzufügen</button>
 
-      <div class="actions">
+      <p class="hint">Export lädt die aktuell gespeicherte Konfiguration als Datei herunter. Import liest eine solche Datei ein und übernimmt sie ins Formular oben - erst "Speichern" schreibt sie tatsächlich fest.</p>
+    </div>
+
+    <!-- Fixed, nicht Teil des normalen Dokumentflusses - dadurch deutlich abgesetzt vom
+         Formularinhalt darüber (Feedback: sah vorher wie ein Teil von "Erlaubte Peers" aus) und
+         immer erreichbar, ohne bei einem langen Formular erst nach unten scrollen zu müssen.
+         Sitzt innerhalb von #tab-config, nicht global - blendet sich dadurch automatisch mit dem
+         Tab-Wechsel (display:none auf dem Panel) ein/aus, keine eigene JS-Logik nötig. Auf dem
+         Mappings-Tab bewusst nicht übernommen - dort sitzen die Buttons schon gut sichtbar direkt
+         im Listenkopf. -->
+    <div class="config-actions-bar">
+      <div class="config-actions-bar-inner">
         <button id="config-reload">Neu laden</button>
         <button id="config-save" class="primary">Speichern</button>
         <button id="config-export" type="button">Exportieren</button>
         <button id="config-import-btn" type="button">Importieren</button>
         <input id="config-import-file" type="file" accept="application/json" hidden>
+        <div id="config-message" class="message"></div>
       </div>
-      <p class="hint">Export lädt die aktuell gespeicherte Konfiguration als Datei herunter. Import liest eine solche Datei ein und übernimmt sie ins Formular oben - erst "Speichern" schreibt sie tatsächlich fest.</p>
-      <div id="config-message" class="message"></div>
     </div>
   </section>
 
